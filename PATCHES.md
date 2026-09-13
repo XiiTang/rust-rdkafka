@@ -1,7 +1,7 @@
 # Controlled Runtime client
 
 Base rust-rdkafka 0.39.0: `598ac4ba1f714852bdf4e5685fe10cf5a66e947c`.
-Native librdkafka fork: `acb968ce2da3a23853e2535c6a0a9c9499aeb0d4` (2.12.1).
+Native librdkafka fork: `80e4daa4db47383f20a701046c0acdb713070a4a` (2.12.1).
 
 `SuppliedTransport` provides bounded private TCP byte bridges and logical broker connect callbacks. It performs no Kafka parsing. Its resolver never resolves an external target; the embedding Runtime owns DNS, proxies, TLS, frozen credentials, target authorization and cancellation. Stable native broker-instance IDs distinguish a new broker from reconnection. Native codecs, compression, routing, producer/consumer groups, transactions and administration are unchanged except the documented native bounds.
 

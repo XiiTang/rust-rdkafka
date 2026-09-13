@@ -332,6 +332,19 @@ impl fmt::Debug for BorrowedMessage<'_> {
 }
 
 impl<'a> BorrowedMessage<'a> {
+    /// Native delivery persistence status; local enqueue is not persistence.
+    pub fn persistence_status(&self) -> &'static str {
+        unsafe {
+            match rdsys::rd_kafka_message_status(self.ptr.ptr()) {
+                rdsys::rd_kafka_msg_status_t::RD_KAFKA_MSG_STATUS_NOT_PERSISTED => "not_persisted",
+                rdsys::rd_kafka_msg_status_t::RD_KAFKA_MSG_STATUS_POSSIBLY_PERSISTED => {
+                    "possibly_persisted"
+                }
+                rdsys::rd_kafka_msg_status_t::RD_KAFKA_MSG_STATUS_PERSISTED => "persisted",
+            }
+        }
+    }
+
     /// Creates a new `BorrowedMessage` that wraps the native Kafka message
     /// pointer returned by a consumer. The lifetime of the message will be
     /// bound to the lifetime of the consumer passed as parameter. This method

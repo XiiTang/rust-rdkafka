@@ -767,7 +767,7 @@ where
         unsafe { rdsys::rd_kafka_queue_cb_event_enable(self.queue.ptr(), None, ptr::null_mut()) }
 
         trace!("Destroying consumer: {:?}", self.client.native_ptr());
-        if self.group_id.is_some() {
+        if self.group_id.is_some() && self.client.context().supplied_transport().is_none() {
             if let Err(err) = self.close_queue() {
                 error!("Failed to close consumer queue on drop: {}", err);
             } else {

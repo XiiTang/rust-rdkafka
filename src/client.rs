@@ -48,6 +48,11 @@ use crate::util::{self, ErrBuf, KafkaDrop, NativePtr, Timeout};
 /// [`ConsumerContext`]: crate::consumer::ConsumerContext
 /// [`ProducerContext`]: crate::producer::ProducerContext
 pub trait ClientContext: Send + Sync {
+    /// Optional caller-owned transport boundary for every broker connection.
+    fn supplied_transport(&self) -> Option<&crate::transport::SuppliedTransport> {
+        None
+    }
+
     /// Whether to periodically refresh the SASL `OAUTHBEARER` token
     /// by calling [`ClientContext::generate_oauth_token`].
     ///
@@ -157,7 +162,8 @@ impl ClientContext for DefaultClientContext {}
 /// higher level `Client` or producers and consumers.
 // TODO(benesch): this should be `pub(crate)`.
 pub struct NativeClient {
-    ptr: NativePtr<RDKafka>,
+    ptr: ManuallyDrop<NativePtr<RDKafka>>,
+    explicit_close: bool,
 }
 
 unsafe impl KafkaDrop for RDKafka {
@@ -173,7 +179,8 @@ impl NativeClient {
     /// Wraps a pointer to an RDKafka object and returns a new NativeClient.
     pub(crate) unsafe fn from_ptr(ptr: *mut RDKafka) -> NativeClient {
         NativeClient {
-            ptr: NativePtr::from_ptr(ptr).unwrap(),
+            ptr: ManuallyDrop::new(NativePtr::from_ptr(ptr).unwrap()),
+            explicit_close: false,
         }
     }
 
@@ -255,6 +262,11 @@ impl<C: ClientContext> Client<C> {
             )
         };
         native_config.set("log.queue", "true")?;
+        if context.supplied_transport().is_some() {
+            unsafe {
+                crate::transport::install::<C>(native_config.ptr());
+            }
+        }
 
         let client_ptr = unsafe {
             let native_config = ManuallyDrop::new(native_config);
@@ -280,7 +292,11 @@ impl<C: ClientContext> Client<C> {
         unsafe { rdsys::rd_kafka_set_log_level(client_ptr, config.log_level as i32) };
 
         Ok(Client {
-            native: unsafe { NativeClient::from_ptr(client_ptr) },
+            native: unsafe {
+                let mut native = NativeClient::from_ptr(client_ptr);
+                native.explicit_close = context.supplied_transport().is_some();
+                native
+            },
             context,
         })
     }
@@ -396,6 +412,10 @@ impl<C: ClientContext> Client<C> {
                         err_buf.capacity(),
                     )
                 };
+                drop(zeroize::Zeroizing::new(token.into_bytes_with_nul()));
+                drop(zeroize::Zeroizing::new(
+                    principal_name.into_bytes_with_nul(),
+                ));
                 if code == RDKafkaRespErr::RD_KAFKA_RESP_ERR_NO_ERROR {
                     debug!("successfully set refreshed OAuth token");
                 } else {
@@ -655,5 +675,20 @@ mod tests {
         )
         .unwrap();
         assert!(!client.native_ptr().is_null());
+    }
+}
+
+impl Drop for NativeClient {
+    fn drop(&mut self) {
+        unsafe {
+            if self.explicit_close {
+                rdsys::rd_kafka_destroy_flags(
+                    self.ptr.ptr(),
+                    rdsys::RD_KAFKA_DESTROY_F_NO_CONSUMER_CLOSE,
+                );
+            } else {
+                ManuallyDrop::drop(&mut self.ptr);
+            }
+        }
     }
 }

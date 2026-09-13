@@ -40,6 +40,9 @@ where
 }
 
 fn main() {
+    let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    cc::Build::new().file(root.join("src/supplied_resolver.c")).compile("rdkafka_supplied_resolver");
+    println!("cargo:rerun-if-changed=src/supplied_resolver.c");
     if env::var("CARGO_FEATURE_DYNAMIC_LINKING").is_ok() {
         eprintln!("librdkafka will be linked dynamically");
 

@@ -153,6 +153,9 @@ pub type OwnedDeliveryResult = Result<Delivery, (KafkaError, OwnedMessage)>;
 // Delegates all the methods calls to the wrapped context.
 impl<C: ClientContext + 'static> ClientContext for FutureProducerContext<C> {
     const ENABLE_REFRESH_OAUTH_TOKEN: bool = C::ENABLE_REFRESH_OAUTH_TOKEN;
+    fn supplied_transport(&self) -> Option<&crate::transport::SuppliedTransport> {
+        self.wrapped_context.supplied_transport()
+    }
 
     fn log(&self, level: RDKafkaLogLevel, fac: &str, log_message: &str) {
         self.wrapped_context.log(level, fac, log_message);

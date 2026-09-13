@@ -16,6 +16,7 @@ rust-version = "1.74"
 members = ["rdkafka-sys"]
 
 [dependencies]
+zeroize = "1.9"
 rdkafka-sys = { path = "rdkafka-sys", version = "4.10.0", default-features = false }
 futures-channel = "0.3.31"
 futures-executor = { version = "0.3.31", optional = true }

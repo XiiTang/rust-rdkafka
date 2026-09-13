@@ -388,6 +388,12 @@ impl<C: ClientContext> AdminClient<C> {
     }
 
     /// Returns the client underlying this admin client.
+    /// Service global errors and private authentication, independently of admin results.
+    pub fn poll_maintenance<T: Into<Timeout>>(&self, timeout: T) {
+        let queue = self.client.main_queue();
+        let _ = self.client.poll_event(&queue, timeout);
+    }
+    /// Access the underlying native client.
     pub fn inner(&self) -> &Client<C> {
         &self.client
     }
@@ -402,6 +408,16 @@ impl FromClientConfig for AdminClient<DefaultClientContext> {
 impl<C: ClientContext> FromClientConfigAndContext<C> for AdminClient<C> {
     fn from_config_and_context(config: &ClientConfig, context: C) -> KafkaResult<AdminClient<C>> {
         let native_config = config.create_native_config()?;
+        unsafe {
+            rdsys::rd_kafka_conf_set_events(
+                native_config.ptr(),
+                rdsys::RD_KAFKA_EVENT_ERROR
+                    | rdsys::RD_KAFKA_EVENT_LOG
+                    | rdsys::RD_KAFKA_EVENT_STATS
+                    | rdsys::RD_KAFKA_EVENT_OAUTHBEARER_TOKEN_REFRESH,
+            );
+        }
+
         // librdkafka only provides consumer and producer types. We follow the
         // example of the Python bindings in choosing to pretend to be a
         // producer, as producer clients are allegedly more lightweight. [0]

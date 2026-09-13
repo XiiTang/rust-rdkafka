@@ -179,12 +179,13 @@ impl NativeClientConfig {
                 err_buf.capacity(),
             )
         };
+        drop(zeroize::Zeroizing::new(value_c.into_bytes_with_nul()));
         if ret.is_error() {
             return Err(KafkaError::ClientConfig(
                 ret,
                 err_buf.to_string(),
                 key.to_string(),
-                value.to_string(),
+                "[redacted]".to_string(),
             ));
         }
         Ok(())
@@ -376,5 +377,14 @@ mod tests {
         assert_eq!(config.get("a").unwrap(), "1");
         assert_eq!(config.get("b").unwrap(), "2");
         assert_eq!(config.get("c").unwrap(), "3");
+    }
+}
+
+impl Drop for ClientConfig {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        for value in self.conf_map.values_mut() {
+            value.zeroize();
+        }
     }
 }

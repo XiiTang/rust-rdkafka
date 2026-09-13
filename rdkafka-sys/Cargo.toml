@@ -23,6 +23,7 @@ lz4-sys = { version = "1.11.1", optional = true }
 sasl2-sys = { version = "0.1.22", optional = true }
 
 [build-dependencies]
+cc = "1"
 pkg-config = "0.3.32"
 cmake = { version = "0.1.54", optional = true }
 
@@ -100,3 +101,7 @@ static-linking = []
 # docs.rs doesn't allow writing to ~/.cargo/registry (reasonably), so we have to
 # use the CMake build for a proper out-of-tree build.
 features = ["cmake_build"]
+
+[dev-dependencies]
+flate2 = "1"
+snap = "1"

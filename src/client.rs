@@ -52,6 +52,8 @@ pub trait ClientContext: Send + Sync {
     fn supplied_transport(&self) -> Option<&crate::transport::SuppliedTransport> {
         None
     }
+    /// Optional caller-owned SASL state machine, invoked on broker threads.
+    fn supplied_sasl(&self) -> Option<&crate::sasl::Provider> { None }
 
     /// Whether to periodically refresh the SASL `OAUTHBEARER` token
     /// by calling [`ClientContext::generate_oauth_token`].
@@ -262,6 +264,9 @@ impl<C: ClientContext> Client<C> {
             )
         };
         native_config.set("log.queue", "true")?;
+        if context.supplied_sasl().is_some() {
+            unsafe { crate::sasl::install::<C>(native_config.ptr()); }
+        }
         if context.supplied_transport().is_some() {
             unsafe {
                 crate::transport::install::<C>(native_config.ptr());

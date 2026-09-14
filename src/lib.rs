@@ -298,3 +298,4 @@ pub use crate::util::IntoOpaque;
 
 /// Controlled broker transport adapters.
 pub mod transport;
+pub mod sasl;

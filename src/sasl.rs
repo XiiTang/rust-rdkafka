@@ -110,3 +110,22 @@ pub(crate) unsafe fn install<C: ClientContext>(conf: *mut sys::rd_kafka_conf_t) 
         rd_kafka_conf_set_runtime_sasl_cb(conf, Some(callback::<C>));
     }
 }
+
+unsafe extern "C" {
+    fn rd_kafka_conf_set_runtime_sasl_admit_cb(
+        conf: *mut sys::rd_kafka_conf_t,
+        callback: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> c_int>,
+    );
+}
+unsafe extern "C" fn admit<C: ClientContext>(broker: *const c_char, opaque: *mut c_void) -> c_int {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: native client ownership keeps C alive for every broker callback;
+        // librdkafka provides a NUL-terminated snapshot of the broker authority.
+        let (broker, context) = unsafe { (CStr::from_ptr(broker), &*opaque.cast::<C>()) };
+        let broker = broker.to_str().map_err(|_| Error)?;
+        context.authorize_sasl(broker)
+    })).ok().and_then(Result::ok).map_or(-1, |()| 0)
+}
+pub(crate) unsafe fn install_admission<C: ClientContext>(conf: *mut sys::rd_kafka_conf_t) {
+    unsafe { rd_kafka_conf_set_runtime_sasl_admit_cb(conf, Some(admit::<C>)); }
+}

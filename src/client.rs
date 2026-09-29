@@ -52,6 +52,12 @@ pub trait ClientContext: Send + Sync {
     fn supplied_transport(&self) -> Option<&crate::transport::SuppliedTransport> {
         None
     }
+    /// Admit a new SASL exchange for the actual broker authority. Also called
+    /// for in-place reauthentication, before the provider consumes credentials.
+    /// Runs synchronously on a broker thread; failures do not expose diagnostics.
+    fn authorize_sasl(&self, _broker: &str) -> Result<(), crate::sasl::Error> {
+        Ok(())
+    }
     /// Optional caller-owned SASL state machine, invoked on broker threads.
     fn supplied_sasl(&self) -> Option<&crate::sasl::Provider> { None }
 
@@ -264,6 +270,7 @@ impl<C: ClientContext> Client<C> {
             )
         };
         native_config.set("log.queue", "true")?;
+        unsafe { crate::sasl::install_admission::<C>(native_config.ptr()); }
         if context.supplied_sasl().is_some() {
             unsafe { crate::sasl::install::<C>(native_config.ptr()); }
         }

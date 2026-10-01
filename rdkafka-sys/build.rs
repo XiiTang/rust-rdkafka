@@ -41,7 +41,9 @@ where
 
 fn main() {
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    cc::Build::new().file(root.join("src/supplied_resolver.c")).compile("rdkafka_supplied_resolver");
+    cc::Build::new()
+        .file(root.join("src/supplied_resolver.c"))
+        .compile("rdkafka_supplied_resolver");
     println!("cargo:rerun-if-changed=src/supplied_resolver.c");
     println!("cargo:rerun-if-changed=librdkafka/src");
     println!("cargo:rerun-if-changed=librdkafka/CMakeLists.txt");

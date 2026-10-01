@@ -59,7 +59,9 @@ pub trait ClientContext: Send + Sync {
     }
     /// The caller-owned SASL state machine, invoked on broker threads. Every
     /// SASL client requires one: the native mechanism engines are not used.
-    fn supplied_sasl(&self) -> Option<&crate::sasl::Provider> { None }
+    fn supplied_sasl(&self) -> Option<&crate::sasl::Provider> {
+        None
+    }
 
     /// Receives log lines from librdkafka.
     ///
@@ -200,6 +202,25 @@ impl<T> From<EventPollResult<T>> for Option<T> {
     }
 }
 
+unsafe extern "C" fn native_synchronous_log<C: ClientContext>(
+    client: *const RDKafka,
+    level: i32,
+    fac: *const c_char,
+    message: *const c_char,
+) {
+    if client.is_null() || fac.is_null() || message.is_null() {
+        return;
+    }
+    let context = unsafe { rdsys::rd_kafka_opaque(client).cast::<C>().as_ref() };
+    if let Some(context) = context {
+        let fac = unsafe { CStr::from_ptr(fac) }.to_string_lossy();
+        let message = unsafe { CStr::from_ptr(message) }.to_string_lossy();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            context.log(RDKafkaLogLevel::from_int(level), fac.trim(), message.trim())
+        }));
+    }
+}
+
 /// A low-level rdkafka client.
 ///
 /// This type is the basis of the consumers and producers in the [`consumer`]
@@ -241,10 +262,23 @@ impl<C: ClientContext> Client<C> {
                 Arc::as_ptr(&context) as *mut c_void,
             )
         };
-        native_config.set("log.queue", "true")?;
-        unsafe { crate::sasl::install_admission::<C>(native_config.ptr()); }
+        let queue_logs = config.get("log.queue") != Some("false");
+        native_config.set("log.queue", if queue_logs { "true" } else { "false" })?;
+        if !queue_logs {
+            unsafe {
+                rdsys::rd_kafka_conf_set_log_cb(
+                    native_config.ptr(),
+                    Some(native_synchronous_log::<C>),
+                );
+            }
+        }
+        unsafe {
+            crate::sasl::install_admission::<C>(native_config.ptr());
+        }
         if context.supplied_sasl().is_some() {
-            unsafe { crate::sasl::install::<C>(native_config.ptr()); }
+            unsafe {
+                crate::sasl::install::<C>(native_config.ptr());
+            }
         }
         if context.supplied_transport().is_some() {
             unsafe {
@@ -267,11 +301,16 @@ impl<C: ClientContext> Client<C> {
             return Err(KafkaError::ClientCreation(err_buf.to_string()));
         }
 
-        let ret = unsafe {
-            rdsys::rd_kafka_set_log_queue(client_ptr, rdsys::rd_kafka_queue_get_main(client_ptr))
-        };
-        if ret.is_error() {
-            return Err(KafkaError::Global(ret.into()));
+        if queue_logs {
+            let ret = unsafe {
+                rdsys::rd_kafka_set_log_queue(
+                    client_ptr,
+                    rdsys::rd_kafka_queue_get_main(client_ptr),
+                )
+            };
+            if ret.is_error() {
+                return Err(KafkaError::Global(ret.into()));
+            }
         }
         unsafe { rdsys::rd_kafka_set_log_level(client_ptr, config.log_level as i32) };
 

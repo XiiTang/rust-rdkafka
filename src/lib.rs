@@ -296,6 +296,6 @@ pub use crate::statistics::Statistics;
 pub use crate::topic_partition_list::{Offset, TopicPartitionList};
 pub use crate::util::IntoOpaque;
 
+pub mod sasl;
 /// Controlled broker transport adapters.
 pub mod transport;
-pub mod sasl;

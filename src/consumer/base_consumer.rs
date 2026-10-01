@@ -25,7 +25,16 @@ use crate::log::trace;
 use crate::message::{BorrowedMessage, Message};
 use crate::metadata::Metadata;
 use crate::topic_partition_list::{Offset, TopicPartitionList};
-use crate::util::{cstr_to_owned, NativePtr, Timeout};
+use crate::util::{NativePtr, Timeout, cstr_to_owned};
+
+/// Native seek evidence. An overall timeout does not discard completed partitions.
+#[derive(Debug)]
+pub struct SeekOutcome {
+    /// The updated native per-partition replies.
+    pub partitions: TopicPartitionList,
+    /// The overall error while waiting for all replies.
+    pub error: Option<KafkaError>,
+}
 
 /// A low-level consumer that requires manual polling.
 ///
@@ -58,6 +67,23 @@ impl<C> BaseConsumer<C>
 where
     C: ConsumerContext,
 {
+    /// Retains per-partition replies even when waiting for all replies fails.
+    pub fn seek_partitions_with_outcome<T: Into<Timeout>>(
+        &self,
+        partitions: TopicPartitionList,
+        timeout: T,
+    ) -> SeekOutcome {
+        let result = unsafe {
+            RDKafkaError::from_ptr(rdsys::rd_kafka_seek_partitions(
+                self.client.native_ptr(),
+                partitions.ptr(),
+                timeout.into().as_millis(),
+            ))
+        };
+        let error = result.is_error().then(|| KafkaError::Seek(result.name()));
+        SeekOutcome { partitions, error }
+    }
+
     pub(crate) fn new(
         config: &ClientConfig,
         native_config: NativeClientConfig,

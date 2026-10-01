@@ -124,8 +124,13 @@ unsafe extern "C" fn admit<C: ClientContext>(broker: *const c_char, opaque: *mut
         let (broker, context) = unsafe { (CStr::from_ptr(broker), &*opaque.cast::<C>()) };
         let broker = broker.to_str().map_err(|_| Error)?;
         context.authorize_sasl(broker)
-    })).ok().and_then(Result::ok).map_or(-1, |()| 0)
+    }))
+    .ok()
+    .and_then(Result::ok)
+    .map_or(-1, |()| 0)
 }
 pub(crate) unsafe fn install_admission<C: ClientContext>(conf: *mut sys::rd_kafka_conf_t) {
-    unsafe { rd_kafka_conf_set_runtime_sasl_admit_cb(conf, Some(admit::<C>)); }
+    unsafe {
+        rd_kafka_conf_set_runtime_sasl_admit_cb(conf, Some(admit::<C>));
+    }
 }

@@ -12,8 +12,19 @@ macOS arm64 evidence in IMAPipe: independent Kafka 4.3.1 five-codec, binary-head
 This fork does not add automatic credential refresh, arbitrary raw requests, a second Kafka engine or business exactly-once guarantees.
 
 `ClientContext::authorize_sasl` admits every authentication start at the native
-provider boundary, including same-socket reauthentication. The default permits
-existing clients unchanged. A refusal or panic crosses the FFI boundary only as
-a fixed failure code; native PLAIN/SCRAM/OAuth/GSSAPI engines remain intact.
+provider boundary, including same-socket reauthentication. A refusal or panic
+crosses the FFI boundary only as a fixed failure code.
 The library suite with cmake-build,tokio,ssl-vendored,libz-static,zstd passes 19
 tests on macOS arm64. Boundless retains the frozen-expiry and owned-peer tests.
+
+## Caller-owned SASL for every mechanism
+
+A SASL client requires `ClientContext::supplied_sasl`: the companion librdkafka
+fork selects only the caller-owned exchange, for whichever single mechanism
+`sasl.mechanism` names (PLAIN, SCRAM, OAUTHBEARER, GSSAPI or any other the
+caller implements). The native mechanism engines are unreachable, so the OAuth
+token-refresh API (`ENABLE_REFRESH_OAUTH_TOKEN`, `generate_oauth_token`,
+`OAuthToken` and the refresh event) is removed. `FutureProducerContext`
+forwards `authorize_sasl` and `supplied_sasl` to the wrapped context.
+Boundless runs PLAIN, both SCRAM mechanisms, OAUTHBEARER and an external
+exchange against Kafka 4.3.1 through this path.

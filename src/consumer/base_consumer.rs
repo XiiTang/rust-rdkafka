@@ -69,8 +69,7 @@ where
                 rdsys::RD_KAFKA_EVENT_REBALANCE
                     | rdsys::RD_KAFKA_EVENT_OFFSET_COMMIT
                     | rdsys::RD_KAFKA_EVENT_STATS
-                    | rdsys::RD_KAFKA_EVENT_ERROR
-                    | rdsys::RD_KAFKA_EVENT_OAUTHBEARER_TOKEN_REFRESH,
+                    | rdsys::RD_KAFKA_EVENT_ERROR,
             )
         };
         let client = Client::new(

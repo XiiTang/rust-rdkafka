@@ -413,8 +413,7 @@ impl<C: ClientContext> FromClientConfigAndContext<C> for AdminClient<C> {
                 native_config.ptr(),
                 rdsys::RD_KAFKA_EVENT_ERROR
                     | rdsys::RD_KAFKA_EVENT_LOG
-                    | rdsys::RD_KAFKA_EVENT_STATS
-                    | rdsys::RD_KAFKA_EVENT_OAUTHBEARER_TOKEN_REFRESH,
+                    | rdsys::RD_KAFKA_EVENT_STATS,
             );
         }
 

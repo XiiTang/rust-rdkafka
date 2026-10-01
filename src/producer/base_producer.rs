@@ -277,8 +277,7 @@ where
                 native_config.ptr(),
                 rdsys::RD_KAFKA_EVENT_DR
                     | rdsys::RD_KAFKA_EVENT_STATS
-                    | rdsys::RD_KAFKA_EVENT_ERROR
-                    | rdsys::RD_KAFKA_EVENT_OAUTHBEARER_TOKEN_REFRESH,
+                    | rdsys::RD_KAFKA_EVENT_ERROR,
             )
         };
         let client = Client::new_context_arc(

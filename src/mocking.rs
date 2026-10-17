@@ -406,6 +406,43 @@ mod tests {
 
     use super::*;
 
+    /// A commit no group coordinator can take ends at its timeout, where a
+    /// synchronous commit would wait for a coordinator.
+    #[test]
+    fn commit_within_ends_at_its_timeout_without_a_coordinator() {
+        use crate::consumer::BaseConsumer;
+        use crate::topic_partition_list::{Offset, TopicPartitionList};
+        use crate::types::RDKafkaErrorCode;
+        use std::time::{Duration, Instant};
+
+        let mock_cluster = MockCluster::new(2).unwrap();
+        mock_cluster
+            .coordinator(MockCoordinator::Group("commit-within".into()), 2)
+            .unwrap();
+        mock_cluster.broker_down(2).unwrap();
+        let consumer: BaseConsumer = ClientConfig::new()
+            .set("bootstrap.servers", mock_cluster.bootstrap_servers())
+            .set("group.id", "commit-within")
+            .set("enable.auto.commit", "false")
+            // librdkafka keeps a deferred commit this long, and so the close
+            // that ends this test.
+            .set("session.timeout.ms", "6000")
+            .create()
+            .unwrap();
+        let mut offsets = TopicPartitionList::new();
+        offsets
+            .add_partition_offset("topic", 0, Offset::Offset(1))
+            .unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            consumer.commit_within(&offsets, Duration::from_millis(500)),
+            Err(KafkaError::ConsumerCommit(
+                RDKafkaErrorCode::OperationTimedOut
+            ))
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_mockcluster() {
         const TOPIC: &str = "test_topic";

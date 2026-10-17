@@ -11,6 +11,7 @@ use log::{error, warn};
 use rdkafka_sys as rdsys;
 use rdkafka_sys::types::*;
 
+use crate::admin::NativeEvent;
 use crate::client::{Client, EventPollResult, NativeClient, NativeQueue};
 use crate::config::{
     ClientConfig, FromClientConfig, FromClientConfigAndContext, NativeClientConfig,
@@ -562,6 +563,38 @@ where
                 topic_partition_list.ptr(),
                 mode as i32,
             )
+        };
+        if error.is_error() {
+            Err(KafkaError::ConsumerCommit(error.into()))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn commit_within<T: Into<Timeout>>(
+        &self,
+        topic_partition_list: &TopicPartitionList,
+        timeout: T,
+    ) -> KafkaResult<()> {
+        // The answer goes to a queue of this call's own; dropping the queue
+        // discards an answer that arrives after `timeout`.
+        let queue = self.client.new_native_queue();
+        let error = unsafe {
+            rdsys::rd_kafka_commit_queue(
+                self.client.native_ptr(),
+                topic_partition_list.ptr(),
+                queue.ptr(),
+                None,
+                ptr::null_mut(),
+            )
+        };
+        let error = if error.is_error() {
+            error
+        } else {
+            match unsafe { NativeEvent::from_ptr(queue.poll(timeout)) } {
+                None => RDKafkaRespErr::RD_KAFKA_RESP_ERR__TIMED_OUT,
+                Some(event) => unsafe { rdsys::rd_kafka_event_error(event.ptr()) },
+            }
         };
         if error.is_error() {
             Err(KafkaError::ConsumerCommit(error.into()))

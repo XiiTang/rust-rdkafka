@@ -437,6 +437,14 @@ where
         self.base.commit(topic_partition_list, mode)
     }
 
+    fn commit_within<T: Into<Timeout>>(
+        &self,
+        topic_partition_list: &TopicPartitionList,
+        timeout: T,
+    ) -> KafkaResult<()> {
+        self.base.commit_within(topic_partition_list, timeout)
+    }
+
     fn commit_consumer_state(&self, mode: CommitMode) -> KafkaResult<()> {
         self.base.commit_consumer_state(mode)
     }

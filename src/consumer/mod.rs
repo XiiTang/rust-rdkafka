@@ -286,6 +286,25 @@ where
         mode: CommitMode,
     ) -> KafkaResult<()>;
 
+    /// Commits the offsets in `topic_partition_list` and waits at most
+    /// `timeout` for the commit's answer.
+    ///
+    /// A synchronous [`Consumer::commit`] waits without bound: librdkafka
+    /// defers a commit while the group has no coordinator, and retries one
+    /// whose connection failed for as long as it can reconnect. When
+    /// `timeout` passes first this returns
+    /// [`KafkaError::ConsumerCommit`] with
+    /// [`RDKafkaErrorCode::OperationTimedOut`]: the commit may still take
+    /// effect, and its later answer is discarded. Until librdkafka ends it,
+    /// a consumer close waits for it.
+    ///
+    /// [`RDKafkaErrorCode::OperationTimedOut`]: crate::types::RDKafkaErrorCode::OperationTimedOut
+    fn commit_within<T: Into<Timeout>>(
+        &self,
+        topic_partition_list: &TopicPartitionList,
+        timeout: T,
+    ) -> KafkaResult<()>;
+
     /// Commits the current consumer state. Notice that if the consumer fails
     /// after a message has been received, but before the message has been
     /// processed by the user code, this might lead to data loss. Check the

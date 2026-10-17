@@ -14,7 +14,7 @@ This fork does not add automatic credential refresh, arbitrary raw requests, a s
 `ClientContext::authorize_sasl` admits every authentication start at the native
 provider boundary, including same-socket reauthentication. A refusal or panic
 crosses the FFI boundary only as a fixed failure code.
-The library suite with cmake-build,tokio,ssl-vendored,libz-static,zstd passes 19
+The library suite with cmake-build,tokio,ssl-vendored,libz-static,zstd passes 20
 tests on macOS arm64. Boundless retains the frozen-expiry and owned-peer tests.
 
 ## Caller-owned SASL for every mechanism
@@ -28,3 +28,15 @@ token-refresh API (`ENABLE_REFRESH_OAUTH_TOKEN`, `generate_oauth_token`,
 forwards `authorize_sasl` and `supplied_sasl` to the wrapped context.
 Boundless runs PLAIN, both SCRAM mechanisms, OAUTHBEARER and an external
 exchange against Kafka 4.3.1 through this path.
+
+## Bounded commit
+
+`Consumer::commit_within` commits through `rd_kafka_commit_queue` on a queue
+of its own and waits at most its timeout for the answer, failing with
+`ConsumerCommit(OperationTimedOut)` when the timeout passes first; dropping the
+queue discards a later answer. A synchronous `commit` waits with
+`RD_POLL_INFINITE`: librdkafka defers a commit while the group has no
+coordinator until `session.timeout.ms`, and retries one whose coordinator
+connection cannot be opened again for as long as that lasts (Boundless #66).
+Test: `mocking::tests::commit_within_ends_at_its_timeout_without_a_coordinator`.
+Boundless asserts the commit and the close after it against a fake broker.

@@ -38,5 +38,7 @@ queue discards a later answer. A synchronous `commit` waits with
 `RD_POLL_INFINITE`: librdkafka defers a commit while the group has no
 coordinator until `session.timeout.ms`, and retries one whose coordinator
 connection cannot be opened again for as long as that lasts (Boundless #66).
+A commit whose request was transmitted is not sent again: it ends with that
+request's error (librdkafka `0bc88f8e`).
 Test: `mocking::tests::commit_within_ends_at_its_timeout_without_a_coordinator`.
 Boundless asserts the commit and the close after it against a fake broker.

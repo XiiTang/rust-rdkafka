@@ -42,3 +42,36 @@ A commit whose request was transmitted is not sent again: it ends with that
 request's error (librdkafka `0bc88f8e`).
 Test: `mocking::tests::commit_within_ends_at_its_timeout_without_a_coordinator`.
 Boundless asserts the commit and the close after it against a fake broker.
+
+## Supplied-transport socket admission and per-half ownership (W17b)
+
+`SuppliedTransport::new(maximum, admit, connect, failed)`. `admit` returns
+`SocketPermits::new(listener, native, peer)`: three opaque guards the caller
+reserves together before the pairing listener binds. The listener's guard is
+dropped when the socket callback returns; the native half's when librdkafka's
+close callback closes its descriptor; the peer's travels in
+`TransportPeer<S>` into `connect` and the caller's pump (`try_map` converts the
+stream and carries the guard; `stream_mut` borrows it) and is dropped after the
+stream is destroyed, independently of the native half and of one direction's
+EOF. Setup that fails drops every unused guard. `failed` receives the original
+`io::Error` of every socket and connect failure, typed caller causes included,
+before the FFI failure return, after bootstrap too. `maximum` still bounds
+pairs awaiting handoff.
+
+Before (`207cde1`, unchanged at `aab4bc93`, src/transport.rs:37-66, :69-82,
+:84-107, :109-129) the pair existed before any caller admission, a socket
+error became `-1` with no cause, every connect error became `ECONNREFUSED`,
+and nothing outlived the handoff to account the peer still copying after the
+native descriptor closed.
+
+Regression: `transport::tests` (6 tests) cover refusal before socket creation
+with the typed cause kept, rollback of all three guards with the original OS
+error, the listener's guard returned at socket return so three slots suffice,
+the peer's guard kept through native close and one-sided EOF until the pump
+drops it, a connect cause after a successful handoff, the pending bound and
+stream-before-guard destruction. They do not compile against the old
+two-argument constructor; on this branch
+`cargo test --lib --no-default-features --features
+cmake-build,tokio,ssl-vendored,libz-static,zstd transport::tests` passes all
+six on macOS arm64 (exit 0). Boundless's callers and error-event delivery
+change with its W17b item.

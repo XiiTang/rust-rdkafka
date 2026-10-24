@@ -580,6 +580,32 @@ mod tests {
     }
 
     #[test]
+    fn failed_peer_conversion_releases_only_the_peer_and_preserves_the_cause() {
+        let budget = Budget::new(3);
+        let cause = budget.refusal.clone();
+        let (context, errors) = context(1, &budget, move |_, _, peer| {
+            peer.try_map::<()>(|stream| {
+                drop(stream);
+                Err(io::Error::other(Refused(cause.clone())))
+            })?;
+            unreachable!()
+        });
+        let native = context.open().unwrap();
+        assert_eq!(native.connect(), libc::ECONNREFUSED);
+        assert_eq!(budget.released(), [1, 0, 1]);
+        let errors = errors.lock().unwrap();
+        assert_eq!(errors.len(), 1);
+        let error = errors[0]
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<Refused>()
+            .unwrap();
+        assert!(Arc::ptr_eq(&error.0, &budget.refusal));
+        drop(native);
+        assert_eq!(budget.live.load(SeqCst), 0);
+    }
+
+    #[test]
     fn peer_stream_is_destroyed_before_its_permit() {
         struct PeerPermit(Arc<Mutex<Vec<&'static str>>>);
         impl Drop for PeerPermit {
@@ -616,5 +642,39 @@ mod tests {
         let native = context.open().unwrap();
         assert_eq!(native.connect(), 0);
         assert_eq!(*events.lock().unwrap(), ["stream", "permit"]);
+    }
+
+    #[test]
+    fn callback_panics_are_contained_and_return_owned_permits() {
+        let budget = Budget::new(3);
+        let admitted = budget.clone();
+        let panic_in_admit = Arc::new(AtomicBool::new(true));
+        let admit_panics = panic_in_admit.clone();
+        let failures = Arc::new(AtomicUsize::new(0));
+        let failed = failures.clone();
+        let context = Context(SuppliedTransport::new(
+            1,
+            move || {
+                let permits = admitted.admit()?;
+                assert!(!admit_panics.load(SeqCst), "admission panic");
+                Ok(permits)
+            },
+            |_, _, _peer| panic!("connect panic"),
+            move |_| {
+                failed.fetch_add(1, SeqCst);
+                panic!("failure handler panic");
+            },
+        ));
+        assert!(context.open().is_none());
+        assert_eq!(budget.live.load(SeqCst), 0);
+        assert_eq!(budget.released(), [1, 1, 1]);
+        panic_in_admit.store(false, SeqCst);
+        let native = context.open().unwrap();
+        assert_eq!(native.connect(), libc::ECONNREFUSED);
+        assert_eq!(budget.live.load(SeqCst), 1);
+        drop(native);
+        assert_eq!(budget.live.load(SeqCst), 0);
+        assert_eq!(budget.released(), [2, 2, 2]);
+        assert_eq!(failures.load(SeqCst), 2);
     }
 }

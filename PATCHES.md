@@ -64,14 +64,16 @@ error became `-1` with no cause, every connect error became `ECONNREFUSED`,
 and nothing outlived the handoff to account the peer still copying after the
 native descriptor closed.
 
-Regression: `transport::tests` (6 tests) cover refusal before socket creation
+Regression: `transport::tests` (8 tests) cover refusal before socket creation
 with the typed cause kept, rollback of all three guards with the original OS
 error, the listener's guard returned at socket return so three slots suffice,
 the peer's guard kept through native close and one-sided EOF until the pump
-drops it, a connect cause after a successful handoff, the pending bound and
-stream-before-guard destruction. They do not compile against the old
-two-argument constructor; on this branch
+drops it, a connect cause after a successful handoff, a failed `try_map`
+conversion releasing only the peer's guard with its typed cause kept, the
+pending bound, stream-before-guard destruction, and panics in `admit`,
+`connect` and `failed` contained with every owned guard returned. They do not
+compile against the old two-argument constructor; on this branch
 `cargo test --lib --no-default-features --features
 cmake-build,tokio,ssl-vendored,libz-static,zstd transport::tests` passes all
-six on macOS arm64 (exit 0). Boundless's callers and error-event delivery
+eight on macOS arm64 (exit 0). Boundless's callers and error-event delivery
 change with its W17b item.

@@ -530,8 +530,10 @@ impl NativeEvent {
     fn check_error(&self) -> KafkaResult<()> {
         let err = unsafe { rdsys::rd_kafka_event_error(self.ptr()) };
         if err.is_error() {
-            Err(unsafe { KafkaError::AdminOp(err.into())
-                .with_reply(rdsys::rd_kafka_event_broker_reply(self.ptr())) })
+            Err(unsafe {
+                KafkaError::AdminOp(err.into())
+                    .with_reply(rdsys::rd_kafka_event_broker_reply(self.ptr()))
+            })
         } else {
             Ok(())
         }
@@ -717,9 +719,17 @@ fn build_topic_results(topics: *const *const RDKafkaTopicResult, n: usize) -> Ve
         let err = unsafe { rdsys::rd_kafka_topic_result_error(topic) };
         let reply = unsafe { rdsys::rd_kafka_topic_result_broker_reply(topic) };
         if err.is_error() || unsafe { reply.as_ref() }.is_some_and(|reply| reply.code != 0) {
-            let error = unsafe { crate::error::RDKafkaError::from_result(
-                err, rdsys::rd_kafka_topic_result_error_string(topic), reply) };
-            out.push(Err(ResourceError { resource: name, error }));
+            let error = unsafe {
+                crate::error::RDKafkaError::from_result(
+                    err,
+                    rdsys::rd_kafka_topic_result_error_string(topic),
+                    reply,
+                )
+            };
+            out.push(Err(ResourceError {
+                resource: name,
+                error,
+            }));
         } else {
             out.push(Ok(name));
         }
@@ -738,10 +748,17 @@ fn build_group_results(groups: *const *const RDKafkaGroupResult, n: usize) -> Ve
         let native = unsafe { rdsys::rd_kafka_group_result_error(group) };
         let err = unsafe { rdsys::rd_kafka_error_code(native) };
         if err.is_error() {
-            let error = unsafe { crate::error::RDKafkaError::from_result(
-                err, rdsys::rd_kafka_error_string(native),
-                rdsys::rd_kafka_error_broker_reply(native)) };
-            out.push(Err(ResourceError { resource: name, error }));
+            let error = unsafe {
+                crate::error::RDKafkaError::from_result(
+                    err,
+                    rdsys::rd_kafka_error_string(native),
+                    rdsys::rd_kafka_error_broker_reply(native),
+                )
+            };
+            out.push(Err(ResourceError {
+                resource: name,
+                error,
+            }));
         } else {
             out.push(Ok(name));
         }
@@ -1313,13 +1330,23 @@ impl Future for DescribeConfigsFuture {
                     is_sensitive: unsafe { rdsys::rd_kafka_ConfigEntry_is_sensitive(entry) } != 0,
                 });
             }
-            let value = ConfigResource { specifier, entries: entries_out };
+            let value = ConfigResource {
+                specifier,
+                entries: entries_out,
+            };
             let status = unsafe { rdsys::rd_kafka_ConfigResource_error(resource) };
             if status.is_error() {
-                let error = unsafe { crate::error::RDKafkaError::from_result(
-                    status, rdsys::rd_kafka_ConfigResource_error_string(resource),
-                    rdsys::rd_kafka_ConfigResource_broker_reply(resource)) };
-                out.push(Err(ResourceError { resource: value, error }));
+                let error = unsafe {
+                    crate::error::RDKafkaError::from_result(
+                        status,
+                        rdsys::rd_kafka_ConfigResource_error_string(resource),
+                        rdsys::rd_kafka_ConfigResource_broker_reply(resource),
+                    )
+                };
+                out.push(Err(ResourceError {
+                    resource: value,
+                    error,
+                }));
             } else {
                 out.push(Ok(value));
             }
@@ -1333,8 +1360,7 @@ impl Future for DescribeConfigsFuture {
 //
 
 /// The result of an individual AlterConfig operation.
-pub type AlterConfigsResult =
-    Result<OwnedResourceSpecifier, ResourceError<OwnedResourceSpecifier>>;
+pub type AlterConfigsResult = Result<OwnedResourceSpecifier, ResourceError<OwnedResourceSpecifier>>;
 
 /// Configuration for an AlterConfig operation.
 pub struct AlterConfig<'a> {
@@ -1422,10 +1448,17 @@ impl Future for AlterConfigsFuture {
             let specifier = extract_config_specifier(resource)?;
             let status = unsafe { rdsys::rd_kafka_ConfigResource_error(resource) };
             if status.is_error() {
-                let error = unsafe { crate::error::RDKafkaError::from_result(
-                    status, rdsys::rd_kafka_ConfigResource_error_string(resource),
-                    rdsys::rd_kafka_ConfigResource_broker_reply(resource)) };
-                out.push(Err(ResourceError { resource: specifier, error }));
+                let error = unsafe {
+                    crate::error::RDKafkaError::from_result(
+                        status,
+                        rdsys::rd_kafka_ConfigResource_error_string(resource),
+                        rdsys::rd_kafka_ConfigResource_broker_reply(resource),
+                    )
+                };
+                out.push(Err(ResourceError {
+                    resource: specifier,
+                    error,
+                }));
             } else {
                 out.push(Ok(specifier));
             }

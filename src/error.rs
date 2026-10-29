@@ -45,7 +45,10 @@ impl IsError for RDKafkaError {
 
 /// Native rdkafka error.
 #[derive(Clone)]
-pub struct RDKafkaError(Option<Arc<NativePtr<rdsys::rd_kafka_error_t>>>, Option<BrokerReply>);
+pub struct RDKafkaError(
+    Option<Arc<NativePtr<rdsys::rd_kafka_error_t>>>,
+    Option<BrokerReply>,
+);
 
 unsafe impl KafkaDrop for rdsys::rd_kafka_error_t {
     const TYPE: &'static str = "error";
@@ -67,10 +70,15 @@ impl RDKafkaError {
     }
 
     pub(crate) unsafe fn from_result(
-        code: RDKafkaRespErr, message: *const libc::c_char,
+        code: RDKafkaRespErr,
+        message: *const libc::c_char,
         reply: *const rdsys::rd_kafka_broker_reply_t,
     ) -> Self {
-        let message = if message.is_null() { rdsys::rd_kafka_err2str(code) } else { message };
+        let message = if message.is_null() {
+            rdsys::rd_kafka_err2str(code)
+        } else {
+            message
+        };
         let ptr = rdsys::rd_kafka_error_new(code, b"%s\0".as_ptr().cast(), message);
         let mut error = Self::from_ptr(ptr);
         error.1 = BrokerReply::from_ptr(reply);
@@ -176,7 +184,7 @@ pub enum ReplyTarget {
         /// Topic name.
         topic: String,
         /// Partition id.
-        partition: i32
+        partition: i32,
     },
     /// Group result.
     Group(String),
@@ -185,12 +193,12 @@ pub enum ReplyTarget {
         /// Original wire resource type.
         resource_type: i8,
         /// Resource name.
-        name: String
+        name: String,
     },
     /// Authentication outcome, without mechanism bytes.
     Authentication {
         /// Configured SASL mechanism.
-        mechanism: String
+        mechanism: String,
     },
 }
 impl BrokerReply {
@@ -198,7 +206,9 @@ impl BrokerReply {
         use rdsys::rd_kafka_reply_target_t::*;
         let reply = ptr.as_ref()?;
         let text = |ptr: *const libc::c_char, len: usize| {
-            if len == 0 { return String::new(); }
+            if len == 0 {
+                return String::new();
+            }
             String::from_utf8(std::slice::from_raw_parts(ptr.cast(), len).to_vec())
                 .expect("librdkafka supplies UTF-8 Kafka response text")
         };
@@ -206,17 +216,27 @@ impl BrokerReply {
         let target = match reply.target {
             RD_KAFKA_REPLY_REQUEST => ReplyTarget::Request,
             RD_KAFKA_REPLY_TOPIC => ReplyTarget::Topic(name),
-            RD_KAFKA_REPLY_PARTITION => ReplyTarget::Partition { topic: name, partition: reply.partition },
+            RD_KAFKA_REPLY_PARTITION => ReplyTarget::Partition {
+                topic: name,
+                partition: reply.partition,
+            },
             RD_KAFKA_REPLY_GROUP => ReplyTarget::Group(name),
-            RD_KAFKA_REPLY_RESOURCE => ReplyTarget::Resource { resource_type: reply.resource_type, name },
+            RD_KAFKA_REPLY_RESOURCE => ReplyTarget::Resource {
+                resource_type: reply.resource_type,
+                name,
+            },
             RD_KAFKA_REPLY_AUTHENTICATION => ReplyTarget::Authentication { mechanism: name },
         };
         Some(Self {
-            api_key: reply.api_key, api_version: reply.api_version,
+            api_key: reply.api_key,
+            api_version: reply.api_version,
             broker_id: reply.broker_id,
-            peer: CStr::from_ptr(reply.peer).to_str()
-                .expect("librdkafka supplies a UTF-8 broker authority").to_owned(),
-            target, code: reply.code,
+            peer: CStr::from_ptr(reply.peer)
+                .to_str()
+                .expect("librdkafka supplies a UTF-8 broker authority")
+                .to_owned(),
+            target,
+            code: reply.code,
             explanation: (reply.explanation_size > 0)
                 .then(|| text(reply.explanation, reply.explanation_size)),
         })
@@ -234,7 +254,7 @@ pub enum KafkaError {
         /// Native classification and diagnostics.
         error: Box<KafkaError>,
         /// The original decoded reply of this result.
-        reply: BrokerReply
+        reply: BrokerReply,
     },
     /// Creation of admin operation failed.
     AdminOpCreation(String),
@@ -483,13 +503,19 @@ impl KafkaError {
     }
     pub(crate) fn with_native_error(self, native: &RDKafkaError) -> Self {
         match native.broker_reply() {
-            Some(reply) => Self::BrokerReply { error: Box::new(self), reply: reply.clone() },
+            Some(reply) => Self::BrokerReply {
+                error: Box::new(self),
+                reply: reply.clone(),
+            },
             None => self,
         }
     }
     pub(crate) unsafe fn with_reply(self, reply: *const rdsys::rd_kafka_broker_reply_t) -> Self {
         match BrokerReply::from_ptr(reply) {
-            Some(reply) => Self::BrokerReply { error: Box::new(self), reply },
+            Some(reply) => Self::BrokerReply {
+                error: Box::new(self),
+                reply,
+            },
             None => self,
         }
     }

@@ -423,8 +423,10 @@ impl<C: ClientContext> Client<C> {
 
     fn handle_error_event(&self, event: *mut RDKafkaEvent) {
         let rdkafka_err = unsafe { rdsys::rd_kafka_event_error(event) };
-        let error = unsafe { KafkaError::Global(rdkafka_err.into())
-            .with_reply(rdsys::rd_kafka_event_broker_reply(event)) };
+        let error = unsafe {
+            KafkaError::Global(rdkafka_err.into())
+                .with_reply(rdsys::rd_kafka_event_broker_reply(event))
+        };
         let reason =
             unsafe { CStr::from_ptr(rdsys::rd_kafka_event_error_string(event)).to_string_lossy() };
         self.context().error(error, reason.trim());
@@ -538,17 +540,26 @@ impl<C: ClientContext> Client<C> {
 
     /// Fetches group data and failed broker subrequests independently.
     pub fn fetch_group_list_with_outcome<T: Into<Timeout>>(
-        &self, group: Option<&str>, timeout: T,
+        &self,
+        group: Option<&str>,
+        timeout: T,
     ) -> KafkaResult<GroupListOutcome> {
         let group = group.map(CString::new).transpose()?;
         let mut groups = ptr::null();
         let mut error = ptr::null_mut();
         let mut broker_errors = ptr::null_mut();
         let mut count = 0;
-        let status = unsafe { rdsys::rd_kafka_list_groups_with_error(
-            self.native_ptr(), group.as_ref().map_or(ptr::null(), |g| g.as_ptr()),
-            &mut groups, timeout.into().as_millis(), &mut error,
-            &mut broker_errors, &mut count) };
+        let status = unsafe {
+            rdsys::rd_kafka_list_groups_with_error(
+                self.native_ptr(),
+                group.as_ref().map_or(ptr::null(), |g| g.as_ptr()),
+                &mut groups,
+                timeout.into().as_millis(),
+                &mut error,
+                &mut broker_errors,
+                &mut count,
+            )
+        };
         let native_error = unsafe { RDKafkaError::from_ptr(error) };
         let groups = (!groups.is_null()).then(|| unsafe { GroupList::from_ptr(groups) });
         struct Errors(*mut rdsys::rd_kafka_group_list_broker_error_t, usize);
@@ -562,19 +573,28 @@ impl<C: ClientContext> Client<C> {
         for i in 0..count {
             let item = unsafe { &*errors.0.add(i) };
             let code = unsafe { rdsys::rd_kafka_error_code(item.error) };
-            let error = unsafe { KafkaError::GroupListFetch(code.into())
-                .with_reply(rdsys::rd_kafka_error_broker_reply(item.error)) };
+            let error = unsafe {
+                KafkaError::GroupListFetch(code.into())
+                    .with_reply(rdsys::rd_kafka_error_broker_reply(item.error))
+            };
             broker_errors.push(BrokerRequestError {
                 broker_id: item.broker_id,
-                peer: unsafe { CStr::from_ptr(item.peer) }.to_str()
-                    .expect("native broker authority is UTF-8").to_owned(),
+                peer: unsafe { CStr::from_ptr(item.peer) }
+                    .to_str()
+                    .expect("native broker authority is UTF-8")
+                    .to_owned(),
                 api_key: item.api_key,
                 api_version: (item.api_version >= 0).then_some(item.api_version),
                 error,
             });
         }
-        Ok(GroupListOutcome { groups, broker_errors, error: status.is_error()
-            .then(|| KafkaError::GroupListFetch(status.into()).with_native_error(&native_error)) })
+        Ok(GroupListOutcome {
+            groups,
+            broker_errors,
+            error: status.is_error().then(|| {
+                KafkaError::GroupListFetch(status.into()).with_native_error(&native_error)
+            }),
+        })
     }
 
     /// Copies the existing first fatal result, including its original reply.

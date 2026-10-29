@@ -5,8 +5,8 @@ use std::time::Duration;
 use backon::{BlockingRetryable, ExponentialBuilder};
 
 use rdkafka::admin::{
-    AdminClient, AdminOptions, AlterConfig, ConfigEntry, ConfigSource, GroupResult, NewPartitions,
-    NewTopic, OwnedResourceSpecifier, ResourceSpecifier, TopicReplication,
+    AdminClient, AdminOptions, AlterConfig, ConfigEntry, ConfigSource, NewPartitions, NewTopic,
+    OwnedResourceSpecifier, ResourceSpecifier, TopicReplication,
 };
 use rdkafka::client::DefaultClientContext;
 use rdkafka::consumer::{BaseConsumer, CommitMode, Consumer, DefaultConsumerContext};
@@ -30,6 +30,12 @@ fn create_admin_client() -> AdminClient<DefaultClientContext> {
     create_config()
         .create()
         .expect("admin client creation failed")
+}
+
+fn keyed_code<K>(
+    result: Result<K, rdkafka::admin::ResourceError<K>>,
+) -> Result<K, (K, RDKafkaErrorCode)> {
+    result.map_err(|error| (error.resource, error.error.code()))
 }
 
 async fn create_consumer_group(consumer_group_name: &str) {
@@ -141,7 +147,10 @@ async fn test_topics() {
         let res = admin_client
             .create_topics(&[topic1, topic2], &opts)
             .await
-            .expect("topic creation failed");
+            .expect("topic creation failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(res, &[Ok(name1.clone()), Ok(name2.clone())]);
 
         let metadata1 = fetch_metadata(&name1);
@@ -210,7 +219,10 @@ async fn test_topics() {
         let res = admin_client
             .create_partitions(&[partitions1], &opts)
             .await
-            .expect("partition creation failed");
+            .expect("partition creation failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(res, &[Ok(name1.clone())]);
 
         let mut tries = 0;
@@ -231,7 +243,10 @@ async fn test_topics() {
         let res = admin_client
             .delete_topics(&[&name1, &name2], &opts)
             .await
-            .expect("topic deletion failed");
+            .expect("topic deletion failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(res, &[Ok(name1.clone()), Ok(name2.clone())]);
         verify_delete(&name1);
         verify_delete(&name2);
@@ -241,7 +256,10 @@ async fn test_topics() {
     // creating topics.
     {
         let topic = NewTopic::new("ignored", 1, TopicReplication::Variable(&[&[0], &[0]]));
-        let res = admin_client.create_topics(&[topic], &opts).await;
+        let res = admin_client
+            .create_topics(&[topic], &opts)
+            .await
+            .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
         assert_eq!(
             Err(KafkaError::AdminOpCreation(
                 "replication configuration for topic 'ignored' assigns 2 partition(s), \
@@ -261,14 +279,20 @@ async fn test_topics() {
         let res = admin_client
             .create_topics(vec![&topic], &opts)
             .await
-            .expect("topic creation failed");
+            .expect("topic creation failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(res, &[Ok(name.clone())]);
         let _ = fetch_metadata(&name);
 
         // This partition specification is obviously garbage, and so trips
         // a client-side error.
         let partitions = NewPartitions::new(&name, 2).assign(&[&[0], &[0], &[0]]);
-        let res = admin_client.create_partitions(&[partitions], &opts).await;
+        let res = admin_client
+            .create_partitions(&[partitions], &opts)
+            .await
+            .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
         assert_eq!(
             res,
             Err(KafkaError::AdminOpCreation(format!(
@@ -283,7 +307,10 @@ async fn test_topics() {
         let res = admin_client
             .create_partitions(&[partitions], &opts)
             .await
-            .expect("partition creation failed");
+            .expect("partition creation failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(
             res,
             &[Err((name, RDKafkaErrorCode::InvalidReplicaAssignment))],
@@ -296,7 +323,10 @@ async fn test_topics() {
         let res = admin_client
             .delete_topics(&[&name], &opts)
             .await
-            .expect("delete topics failed");
+            .expect("delete topics failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(
             res,
             &[Err((name, RDKafkaErrorCode::UnknownTopicOrPartition))]
@@ -315,14 +345,20 @@ async fn test_topics() {
         let res = admin_client
             .create_topics(vec![&topic1], &opts)
             .await
-            .expect("topic creation failed");
+            .expect("topic creation failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(res, &[Ok(name1.clone())]);
         let _ = fetch_metadata(&name1);
 
         let res = admin_client
             .create_topics(vec![&topic1, &topic2], &opts)
             .await
-            .expect("topic creation failed");
+            .expect("topic creation failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(
             res,
             &[
@@ -335,14 +371,20 @@ async fn test_topics() {
         let res = admin_client
             .delete_topics(&[&name1], &opts)
             .await
-            .expect("topic deletion failed");
+            .expect("topic deletion failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(res, &[Ok(name1.clone())]);
         verify_delete(&name1);
 
         let res = admin_client
             .delete_topics(&[&name2, &name1], &opts)
             .await
-            .expect("topic deletion failed");
+            .expect("topic deletion failed")
+            .into_iter()
+            .map(keyed_code)
+            .collect::<Vec<_>>();
         assert_eq!(
             res,
             &[
@@ -483,7 +525,10 @@ async fn test_configs() {
     let res = admin_client
         .alter_configs(&[config], &opts)
         .await
-        .expect("alter configs failed");
+        .expect("alter configs failed")
+        .into_iter()
+        .map(keyed_code)
+        .collect::<Vec<_>>();
     assert_eq!(res, &[Ok(OwnedResourceSpecifier::Broker(0))]);
 
     let mut tries = 0;
@@ -529,7 +574,10 @@ async fn test_configs() {
     let res = admin_client
         .alter_configs(&[config], &opts)
         .await
-        .expect("alter configs failed");
+        .expect("alter configs failed")
+        .into_iter()
+        .map(keyed_code)
+        .collect::<Vec<_>>();
     assert_eq!(res, &[Ok(OwnedResourceSpecifier::Broker(0))]);
 }
 
@@ -543,7 +591,8 @@ async fn test_groups() {
         create_consumer_group(&group_name).await;
         let res = admin_client
             .delete_groups(&[&group_name], &AdminOptions::default())
-            .await;
+            .await
+            .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
         assert_eq!(res, Ok(vec![Ok(group_name.to_string())]));
     }
 
@@ -553,8 +602,9 @@ async fn test_groups() {
         let unknown_group_name = rand_test_group();
         let res = admin_client
             .delete_groups(&[&unknown_group_name], &AdminOptions::default())
-            .await;
-        let expected: GroupResult = Err((unknown_group_name, RDKafkaErrorCode::GroupIdNotFound));
+            .await
+            .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
+        let expected = Err((unknown_group_name, RDKafkaErrorCode::GroupIdNotFound));
         assert_eq!(res, Ok(vec![expected]));
     }
 
@@ -569,7 +619,8 @@ async fn test_groups() {
                 &[&group_name, &unknown_group_name],
                 &AdminOptions::default(),
             )
-            .await;
+            .await
+            .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
         assert_eq!(
             res,
             Ok(vec![
@@ -598,19 +649,28 @@ async fn test_event_errors() {
         .expect("admin client creation failed");
     let opts = AdminOptions::new().request_timeout(Some(Duration::from_nanos(1)));
 
-    let res = admin_client.create_topics(&[], &opts).await;
+    let res = admin_client
+        .create_topics(&[], &opts)
+        .await
+        .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
     assert_eq!(
         res,
         Err(KafkaError::AdminOp(RDKafkaErrorCode::OperationTimedOut))
     );
 
-    let res = admin_client.create_partitions(&[], &opts).await;
+    let res = admin_client
+        .create_partitions(&[], &opts)
+        .await
+        .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
     assert_eq!(
         res,
         Err(KafkaError::AdminOp(RDKafkaErrorCode::OperationTimedOut))
     );
 
-    let res = admin_client.delete_topics(&[], &opts).await;
+    let res = admin_client
+        .delete_topics(&[], &opts)
+        .await
+        .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
     assert_eq!(
         res,
         Err(KafkaError::AdminOp(RDKafkaErrorCode::OperationTimedOut))
@@ -622,7 +682,10 @@ async fn test_event_errors() {
         Some(KafkaError::AdminOp(RDKafkaErrorCode::OperationTimedOut))
     );
 
-    let res = admin_client.alter_configs(&[], &opts).await;
+    let res = admin_client
+        .alter_configs(&[], &opts)
+        .await
+        .map(|results| results.into_iter().map(keyed_code).collect::<Vec<_>>());
     assert_eq!(
         res,
         Err(KafkaError::AdminOp(RDKafkaErrorCode::OperationTimedOut))

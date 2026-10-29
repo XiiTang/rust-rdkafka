@@ -94,14 +94,22 @@ impl GroupInfo {
     }
     /// Returns the broker which answered this description.
     pub fn broker(&self) -> Broker {
-        Broker { id: self.0.broker.id, port: self.0.broker.port,
-            host: unsafe { CStr::from_ptr(self.0.broker.host) }.to_str()
-                .expect("native group broker host is UTF-8").to_owned() }
+        Broker {
+            id: self.0.broker.id,
+            port: self.0.broker.port,
+            host: unsafe { CStr::from_ptr(self.0.broker.host) }
+                .to_str()
+                .expect("native group broker host is UTF-8")
+                .to_owned(),
+        }
     }
     /// Returns only this group's own decoded broker result.
     pub fn broker_reply(&self) -> Option<crate::error::BrokerReply> {
-        unsafe { crate::error::BrokerReply::from_ptr(
-            rdkafka_sys::rd_kafka_group_info_broker_reply(&self.0)) }
+        unsafe {
+            crate::error::BrokerReply::from_ptr(rdkafka_sys::rd_kafka_group_info_broker_reply(
+                &self.0,
+            ))
+        }
     }
 
     /// Returns the name of the group.

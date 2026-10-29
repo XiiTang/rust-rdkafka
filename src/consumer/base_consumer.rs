@@ -80,20 +80,42 @@ where
     C: ConsumerContext,
 {
     /// Commits within the existing timeout, retaining per-partition completion.
-    pub fn commit_within_outcome<T: Into<Timeout>>(&self, offsets: &TopicPartitionList,
-        timeout: T) -> KafkaResult<CommitOutcome> {
+    pub fn commit_within_outcome<T: Into<Timeout>>(
+        &self,
+        offsets: &TopicPartitionList,
+        timeout: T,
+    ) -> KafkaResult<CommitOutcome> {
         let queue = self.client.new_native_queue();
-        let admission = unsafe { rdsys::rd_kafka_commit_queue(self.client.native_ptr(),
-            offsets.ptr(), queue.ptr(), None, ptr::null_mut()) };
-        if admission.is_error() { return Err(KafkaError::ConsumerCommit(admission.into())); }
+        let admission = unsafe {
+            rdsys::rd_kafka_commit_queue(
+                self.client.native_ptr(),
+                offsets.ptr(),
+                queue.ptr(),
+                None,
+                ptr::null_mut(),
+            )
+        };
+        if admission.is_error() {
+            return Err(KafkaError::ConsumerCommit(admission.into()));
+        }
         match unsafe { NativeEvent::from_ptr(queue.poll(timeout)) } {
-            None => Ok(PartitionOutcome { partitions: TopicPartitionList::new(),
-                error: Some(KafkaError::ConsumerCommit(RDKafkaErrorCode::OperationTimedOut)) }),
+            None => Ok(PartitionOutcome {
+                partitions: TopicPartitionList::new(),
+                error: Some(KafkaError::ConsumerCommit(
+                    RDKafkaErrorCode::OperationTimedOut,
+                )),
+            }),
             Some(event) => {
                 let status = unsafe { rdsys::rd_kafka_event_error(event.ptr()) };
                 let parts = unsafe { rdsys::rd_kafka_event_topic_partition_list(event.ptr()) };
-                let partitions = if parts.is_null() { TopicPartitionList::new() } else {
-                    unsafe { TopicPartitionList::from_ptr(rdsys::rd_kafka_topic_partition_list_copy(parts)) }
+                let partitions = if parts.is_null() {
+                    TopicPartitionList::new()
+                } else {
+                    unsafe {
+                        TopicPartitionList::from_ptr(rdsys::rd_kafka_topic_partition_list_copy(
+                            parts,
+                        ))
+                    }
                 };
                 let error = status.is_error().then(|| unsafe {
                     KafkaError::ConsumerCommit(status.into())
@@ -104,24 +126,50 @@ where
         }
     }
     /// Fetches committed offsets without discarding partial native results.
-    pub fn committed_offsets_with_outcome<T: Into<Timeout>>(&self,
-        offsets: TopicPartitionList, timeout: T) -> PartitionOutcome {
+    pub fn committed_offsets_with_outcome<T: Into<Timeout>>(
+        &self,
+        offsets: TopicPartitionList,
+        timeout: T,
+    ) -> PartitionOutcome {
         let mut native = ptr::null_mut();
-        let status = unsafe { rdsys::rd_kafka_committed_with_error(self.client.native_ptr(),
-            offsets.ptr(), timeout.into().as_millis(), &mut native) };
+        let status = unsafe {
+            rdsys::rd_kafka_committed_with_error(
+                self.client.native_ptr(),
+                offsets.ptr(),
+                timeout.into().as_millis(),
+                &mut native,
+            )
+        };
         let native = unsafe { crate::error::RDKafkaError::from_ptr(native) };
-        PartitionOutcome { partitions: offsets, error: status.is_error()
-            .then(|| KafkaError::MetadataFetch(status.into()).with_native_error(&native)) }
+        PartitionOutcome {
+            partitions: offsets,
+            error: status
+                .is_error()
+                .then(|| KafkaError::MetadataFetch(status.into()).with_native_error(&native)),
+        }
     }
     /// Fetches offsets for timestamps without returning unanswered timestamps as offsets.
-    pub fn offsets_for_times_with_outcome<T: Into<Timeout>>(&self,
-        timestamps: TopicPartitionList, timeout: T) -> PartitionOutcome {
+    pub fn offsets_for_times_with_outcome<T: Into<Timeout>>(
+        &self,
+        timestamps: TopicPartitionList,
+        timeout: T,
+    ) -> PartitionOutcome {
         let mut native = ptr::null_mut();
-        let status = unsafe { rdsys::rd_kafka_offsets_for_times_with_error(self.client.native_ptr(),
-            timestamps.ptr(), timeout.into().as_millis(), &mut native) };
+        let status = unsafe {
+            rdsys::rd_kafka_offsets_for_times_with_error(
+                self.client.native_ptr(),
+                timestamps.ptr(),
+                timeout.into().as_millis(),
+                &mut native,
+            )
+        };
         let native = unsafe { crate::error::RDKafkaError::from_ptr(native) };
-        PartitionOutcome { partitions: timestamps, error: status.is_error()
-            .then(|| KafkaError::MetadataFetch(status.into()).with_native_error(&native)) }
+        PartitionOutcome {
+            partitions: timestamps,
+            error: status
+                .is_error()
+                .then(|| KafkaError::MetadataFetch(status.into()).with_native_error(&native)),
+        }
     }
 
     /// Retains per-partition replies even when waiting for all replies fails.
@@ -326,11 +374,15 @@ where
                 unsafe { rdsys::rd_kafka_topic_partition_destroy(tp_ptr) };
                 Some(KafkaError::PartitionEOF(partition))
             } else if unsafe { rdsys::rd_kafka_event_error_is_fatal(event.ptr()) } != 0 {
-                Some(unsafe { KafkaError::MessageConsumptionFatal(rdkafka_err.into())
-                    .with_reply(rdsys::rd_kafka_event_broker_reply(event.ptr())) })
+                Some(unsafe {
+                    KafkaError::MessageConsumptionFatal(rdkafka_err.into())
+                        .with_reply(rdsys::rd_kafka_event_broker_reply(event.ptr()))
+                })
             } else {
-                Some(unsafe { KafkaError::MessageConsumption(rdkafka_err.into())
-                    .with_reply(rdsys::rd_kafka_event_broker_reply(event.ptr())) })
+                Some(unsafe {
+                    KafkaError::MessageConsumption(rdkafka_err.into())
+                        .with_reply(rdsys::rd_kafka_event_broker_reply(event.ptr()))
+                })
             }
         } else {
             None
@@ -626,9 +678,14 @@ where
         }
     }
 
-    fn commit_within<T: Into<Timeout>>(&self, offsets: &TopicPartitionList, timeout: T) -> KafkaResult<()> {
+    fn commit_within<T: Into<Timeout>>(
+        &self,
+        offsets: &TopicPartitionList,
+        timeout: T,
+    ) -> KafkaResult<()> {
         match self.commit_within_outcome(offsets, timeout)?.error {
-            Some(error) => Err(error), None => Ok(()),
+            Some(error) => Err(error),
+            None => Ok(()),
         }
     }
 
@@ -721,9 +778,16 @@ where
         self.committed_offsets(unsafe { TopicPartitionList::from_ptr(tpl_ptr) }, timeout)
     }
 
-    fn committed_offsets<T: Into<Timeout>>(&self, tpl: TopicPartitionList, timeout: T) -> KafkaResult<TopicPartitionList> {
+    fn committed_offsets<T: Into<Timeout>>(
+        &self,
+        tpl: TopicPartitionList,
+        timeout: T,
+    ) -> KafkaResult<TopicPartitionList> {
         let outcome = self.committed_offsets_with_outcome(tpl, timeout);
-        match outcome.error { Some(error) => Err(error), None => Ok(outcome.partitions) }
+        match outcome.error {
+            Some(error) => Err(error),
+            None => Ok(outcome.partitions),
+        }
     }
 
     fn offsets_for_timestamp<T: Into<Timeout>>(
@@ -748,9 +812,16 @@ where
 
     // `timestamps` is a `TopicPartitionList` with timestamps instead of
     // offsets.
-    fn offsets_for_times<T: Into<Timeout>>(&self, timestamps: TopicPartitionList, timeout: T) -> KafkaResult<TopicPartitionList> {
+    fn offsets_for_times<T: Into<Timeout>>(
+        &self,
+        timestamps: TopicPartitionList,
+        timeout: T,
+    ) -> KafkaResult<TopicPartitionList> {
         let outcome = self.offsets_for_times_with_outcome(timestamps, timeout);
-        match outcome.error { Some(error) => Err(error), None => Ok(outcome.partitions) }
+        match outcome.error {
+            Some(error) => Err(error),
+            None => Ok(outcome.partitions),
+        }
     }
 
     fn position(&self) -> KafkaResult<TopicPartitionList> {

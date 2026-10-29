@@ -187,10 +187,19 @@ impl Metadata {
     }
 
     /// Returns the decoded result for a request, topic or partition.
-    pub fn broker_reply(&self, topic: Option<&str>, partition: i32) -> Option<crate::error::BrokerReply> {
+    pub fn broker_reply(
+        &self,
+        topic: Option<&str>,
+        partition: i32,
+    ) -> Option<crate::error::BrokerReply> {
         let topic = topic.map(std::ffi::CString::new).transpose().ok()?;
-        unsafe { crate::error::BrokerReply::from_ptr(rdsys::rd_kafka_metadata_broker_reply(
-            self.0.ptr(), topic.as_ref().map_or(std::ptr::null(), |t| t.as_ptr()), partition)) }
+        unsafe {
+            crate::error::BrokerReply::from_ptr(rdsys::rd_kafka_metadata_broker_reply(
+                self.0.ptr(),
+                topic.as_ref().map_or(std::ptr::null(), |t| t.as_ptr()),
+                partition,
+            ))
+        }
     }
 
     /// Returns the metadata information for all the topics in the cluster.

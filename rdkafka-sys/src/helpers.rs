@@ -89,7 +89,9 @@ pub fn rd_kafka_resp_err_t_to_rdkafka_error(err: RDKafkaRespErr) -> RDKafkaError
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_EXCEPTION => InvalidTopic,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_RECORD_LIST_TOO_LARGE => MessageBatchTooLarge,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_ENOUGH_REPLICAS => NotEnoughReplicas,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_ENOUGH_REPLICAS_AFTER_APPEND => NotEnoughReplicasAfterAppend,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_ENOUGH_REPLICAS_AFTER_APPEND => {
+            NotEnoughReplicasAfterAppend
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_REQUIRED_ACKS => InvalidRequiredAcks,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_ILLEGAL_GENERATION => IllegalGeneration,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INCONSISTENT_GROUP_PROTOCOL => InconsistentGroupProtocol,
@@ -100,7 +102,9 @@ pub fn rd_kafka_resp_err_t_to_rdkafka_error(err: RDKafkaRespErr) -> RDKafkaError
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_COMMIT_OFFSET_SIZE => InvalidCommitOffsetSize,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED => TopicAuthorizationFailed,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_GROUP_AUTHORIZATION_FAILED => GroupAuthorizationFailed,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_CLUSTER_AUTHORIZATION_FAILED => ClusterAuthorizationFailed,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_CLUSTER_AUTHORIZATION_FAILED => {
+            ClusterAuthorizationFailed
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_TIMESTAMP => InvalidTimestamp,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_SASL_MECHANISM => UnsupportedSASLMechanism,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_ILLEGAL_SASL_STATE => IllegalSASLState,
@@ -112,7 +116,9 @@ pub fn rd_kafka_resp_err_t_to_rdkafka_error(err: RDKafkaRespErr) -> RDKafkaError
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_CONFIG => InvalidConfig,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_CONTROLLER => NotController,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_REQUEST => InvalidRequest,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_FOR_MESSAGE_FORMAT => UnsupportedForMessageFormat,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_FOR_MESSAGE_FORMAT => {
+            UnsupportedForMessageFormat
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_POLICY_VIOLATION => PolicyViolation,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_OUT_OF_ORDER_SEQUENCE_NUMBER => OutOfOrderSequenceNumber,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_DUPLICATE_SEQUENCE_NUMBER => DuplicateSequenceNumber,
@@ -121,7 +127,9 @@ pub fn rd_kafka_resp_err_t_to_rdkafka_error(err: RDKafkaRespErr) -> RDKafkaError
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_PRODUCER_ID_MAPPING => InvalidProducerIdMapping,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_TRANSACTION_TIMEOUT => InvalidTransactionTimeout,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_CONCURRENT_TRANSACTIONS => ConcurrentTransactions,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_TRANSACTION_COORDINATOR_FENCED => TransactionCoordinatorFenced,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_TRANSACTION_COORDINATOR_FENCED => {
+            TransactionCoordinatorFenced
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_TRANSACTIONAL_ID_AUTHORIZATION_FAILED => {
             TransactionalIdAuthorizationFailed
         }
@@ -132,10 +140,16 @@ pub fn rd_kafka_resp_err_t_to_rdkafka_error(err: RDKafkaRespErr) -> RDKafkaError
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_SASL_AUTHENTICATION_FAILED => SaslAuthenticationFailed,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN_PRODUCER_ID => UnknownProducerId,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_REASSIGNMENT_IN_PROGRESS => ReassignmentInProgress,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_AUTH_DISABLED => DelegationTokenAuthDisabled,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_AUTH_DISABLED => {
+            DelegationTokenAuthDisabled
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_NOT_FOUND => DelegationTokenNotFound,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_OWNER_MISMATCH => DelegationTokenOwnerMismatch,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_REQUEST_NOT_ALLOWED => DelegationTokenRequestNotAllowed,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_OWNER_MISMATCH => {
+            DelegationTokenOwnerMismatch
+        }
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_REQUEST_NOT_ALLOWED => {
+            DelegationTokenRequestNotAllowed
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_AUTHORIZATION_FAILED => {
             DelegationTokenAuthorizationFailed
         }
@@ -149,14 +163,20 @@ pub fn rd_kafka_resp_err_t_to_rdkafka_error(err: RDKafkaRespErr) -> RDKafkaError
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_DELETION_DISABLED => TopicDeletionDisabled,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_FENCED_LEADER_EPOCH => FencedLeaderEpoch,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN_LEADER_EPOCH => UnknownLeaderEpoch,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_COMPRESSION_TYPE => UnsupportedCompressionType,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_COMPRESSION_TYPE => {
+            UnsupportedCompressionType
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_STALE_BROKER_EPOCH => StaleBrokerEpoch,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_OFFSET_NOT_AVAILABLE => OffsetNotAvailable,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_MEMBER_ID_REQUIRED => MemberIdRequired,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_PREFERRED_LEADER_NOT_AVAILABLE => PreferredLeaderNotAvailable,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_PREFERRED_LEADER_NOT_AVAILABLE => {
+            PreferredLeaderNotAvailable
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_GROUP_MAX_SIZE_REACHED => GroupMaxSizeReached,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_FENCED_INSTANCE_ID => FencedInstanceId,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_ELIGIBLE_LEADERS_NOT_AVAILABLE => EligibleLeadersNotAvailable,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_ELIGIBLE_LEADERS_NOT_AVAILABLE => {
+            EligibleLeadersNotAvailable
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_ELECTION_NOT_NEEDED => ElectionNotNeeded,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_NO_REASSIGNMENT_IN_PROGRESS => NoReassignmentInProgress,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_GROUP_SUBSCRIBED_TO_TOPIC => GroupSubscribedToTopic,
@@ -170,7 +190,9 @@ pub fn rd_kafka_resp_err_t_to_rdkafka_error(err: RDKafkaRespErr) -> RDKafkaError
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INCONSISTENT_VOTER_SET => InconsistentVoterSet,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_UPDATE_VERSION => InvalidUpdateVersion,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_FEATURE_UPDATE_FAILED => FeatureUpdateFailed,
-        RDKafkaRespErr::RD_KAFKA_RESP_ERR_PRINCIPAL_DESERIALIZATION_FAILURE => PrincipalDeserializationFailure,
+        RDKafkaRespErr::RD_KAFKA_RESP_ERR_PRINCIPAL_DESERIALIZATION_FAILURE => {
+            PrincipalDeserializationFailure
+        }
         RDKafkaRespErr::RD_KAFKA_RESP_ERR_END_ALL => EndAll,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR__LOG_TRUNCATION => LogTruncation,
         RDKafkaRespErr::RD_KAFKA_RESP_ERR__INVALID_DIFFERENT_RECORD => InvalidDifferentRecord,

@@ -77,3 +77,11 @@ compile against the old two-argument constructor; on this branch
 cmake-build,tokio,ssl-vendored,libz-static,zstd transport::tests` passes all
 eight on macOS arm64 (exit 0). Boundless's callers and error-event delivery
 change with its W17b item.
+
+W17b port validation on macOS arm64, consumer Rust 1.97.0: all eight
+transport unit tests pass (exit 0), with cmake-build,tokio,ssl-vendored,
+libz-static,zstd. Strict library/tests Clippy exits 101 in unchanged code:
+two items-after-test-module diagnostics in client.rs/config.rs and seven
+large-error closure diagnostics in tests/test_low_producers.rs. The port
+changes neither file; no diagnostic names transport.rs and no lint is
+suppressed. The native librdkafka gitlink remains 0bc88f8e.

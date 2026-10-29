@@ -115,5 +115,8 @@ its typed last error through the existing KafkaResult instead of unwrapping NULL
 macOS arm64 focused run: `cargo test -p rdkafka --lib --no-default-features
 --features cmake-build,tokio,ssl-vendored,libz-static,zstd -- ownership_tests
 refused_topic_creation_is_a_typed_error` passed all six named tests. The native
-gitlink is 1f212020e6bbcd12d8cad34d5346a2f5243443ab. Strict Clippy and the consumer
-build are recorded separately; no full integration/platform lane is claimed.
+gitlink is a53ce7a0e58af252db00399832c36d9640118eb3, merging the current native
+`boundless` clarification ed45278c without changing the reviewed W17d native
+source. This preserves the transmitted-commit refusal rationale alongside the
+W17d entry. Strict Clippy and the consumer build are recorded separately; no
+full integration/platform lane is claimed.

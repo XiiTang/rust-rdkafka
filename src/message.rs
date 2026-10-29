@@ -376,7 +376,7 @@ impl<'a> BorrowedMessage<'a> {
                 }
                 e => KafkaError::MessageConsumption(e.into()),
             };
-            Err(err)
+            Err(err.with_reply(rdsys::rd_kafka_message_broker_reply(ptr.ptr())))
         } else {
             Ok(BorrowedMessage {
                 ptr,
@@ -402,7 +402,8 @@ impl<'a> BorrowedMessage<'a> {
         };
         if (*ptr).err.is_error() {
             Err((
-                KafkaError::MessageProduction((*ptr).err.into()),
+                KafkaError::MessageProduction((*ptr).err.into())
+                    .with_reply(rdsys::rd_kafka_message_broker_reply(ptr)),
                 borrowed_message,
             ))
         } else {

@@ -104,6 +104,12 @@ impl<'a> TopicPartitionListElem<'a> {
     }
 
     /// Returns the optional error associated to the specific entry in the TPL.
+    /// The original decoded result for this partition, if one was received.
+    pub fn broker_reply(&self) -> Option<crate::error::BrokerReply> {
+        unsafe { crate::error::BrokerReply::from_ptr(rdsys::rd_kafka_topic_partition_broker_reply(self.ptr)) }
+    }
+
+    /// Returns this partition's native error independently of its reply.
     pub fn error(&self) -> KafkaResult<()> {
         let kafka_err = self.ptr.err;
         if kafka_err.is_error() {

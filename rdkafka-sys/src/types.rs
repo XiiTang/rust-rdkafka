@@ -1,6 +1,5 @@
 //! Aliases for types defined in the auto-generated bindings.
 
-use std::convert::TryFrom;
 use std::error::Error;
 use std::ffi::CStr;
 use std::fmt;
@@ -124,6 +123,7 @@ pub use bindings::rd_kafka_ConfigSource_t as RDKafkaConfigSource;
 /// Native rdkafka error code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
+#[repr(i32)]
 pub enum RDKafkaErrorCode {
     #[doc(hidden)]
     Begin = -200,
@@ -485,6 +485,8 @@ pub enum RDKafkaErrorCode {
     RebootstrapRequired = 129,
     #[doc(hidden)]
     EndAll,
+    /// A native code not named by this version of librdkafka.
+    UnknownCode(i32),
 }
 
 impl From<RDKafkaRespErr> for RDKafkaErrorCode {
@@ -493,19 +495,194 @@ impl From<RDKafkaRespErr> for RDKafkaErrorCode {
     }
 }
 
+impl RDKafkaErrorCode {
+    /// Returns the original native integer, including unnamed codes.
+    pub fn raw_code(self) -> i32 {
+        match self {
+            Self::Begin => RDKafkaRespErr::RD_KAFKA_RESP_ERR__BEGIN.0,
+            Self::BadMessage => RDKafkaRespErr::RD_KAFKA_RESP_ERR__BAD_MSG.0,
+            Self::BadCompression => RDKafkaRespErr::RD_KAFKA_RESP_ERR__BAD_COMPRESSION.0,
+            Self::BrokerDestroy => RDKafkaRespErr::RD_KAFKA_RESP_ERR__DESTROY.0,
+            Self::Fail => RDKafkaRespErr::RD_KAFKA_RESP_ERR__FAIL.0,
+            Self::BrokerTransportFailure => RDKafkaRespErr::RD_KAFKA_RESP_ERR__TRANSPORT.0,
+            Self::CriticalSystemResource => RDKafkaRespErr::RD_KAFKA_RESP_ERR__CRIT_SYS_RESOURCE.0,
+            Self::Resolve => RDKafkaRespErr::RD_KAFKA_RESP_ERR__RESOLVE.0,
+            Self::MessageTimedOut => RDKafkaRespErr::RD_KAFKA_RESP_ERR__MSG_TIMED_OUT.0,
+            Self::PartitionEOF => RDKafkaRespErr::RD_KAFKA_RESP_ERR__PARTITION_EOF.0,
+            Self::UnknownPartition => RDKafkaRespErr::RD_KAFKA_RESP_ERR__UNKNOWN_PARTITION.0,
+            Self::FileSystem => RDKafkaRespErr::RD_KAFKA_RESP_ERR__FS.0,
+            Self::UnknownTopic => RDKafkaRespErr::RD_KAFKA_RESP_ERR__UNKNOWN_TOPIC.0,
+            Self::AllBrokersDown => RDKafkaRespErr::RD_KAFKA_RESP_ERR__ALL_BROKERS_DOWN.0,
+            Self::InvalidArgument => RDKafkaRespErr::RD_KAFKA_RESP_ERR__INVALID_ARG.0,
+            Self::OperationTimedOut => RDKafkaRespErr::RD_KAFKA_RESP_ERR__TIMED_OUT.0,
+            Self::QueueFull => RDKafkaRespErr::RD_KAFKA_RESP_ERR__QUEUE_FULL.0,
+            Self::ISRInsufficient => RDKafkaRespErr::RD_KAFKA_RESP_ERR__ISR_INSUFF.0,
+            Self::NodeUpdate => RDKafkaRespErr::RD_KAFKA_RESP_ERR__NODE_UPDATE.0,
+            Self::SSL => RDKafkaRespErr::RD_KAFKA_RESP_ERR__SSL.0,
+            Self::WaitingForCoordinator => RDKafkaRespErr::RD_KAFKA_RESP_ERR__WAIT_COORD.0,
+            Self::UnknownGroup => RDKafkaRespErr::RD_KAFKA_RESP_ERR__UNKNOWN_GROUP.0,
+            Self::InProgress => RDKafkaRespErr::RD_KAFKA_RESP_ERR__IN_PROGRESS.0,
+            Self::PreviousInProgress => RDKafkaRespErr::RD_KAFKA_RESP_ERR__PREV_IN_PROGRESS.0,
+            Self::ExistingSubscription => RDKafkaRespErr::RD_KAFKA_RESP_ERR__EXISTING_SUBSCRIPTION.0,
+            Self::AssignPartitions => RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS.0,
+            Self::RevokePartitions => RDKafkaRespErr::RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS.0,
+            Self::Conflict => RDKafkaRespErr::RD_KAFKA_RESP_ERR__CONFLICT.0,
+            Self::State => RDKafkaRespErr::RD_KAFKA_RESP_ERR__STATE.0,
+            Self::UnknownProtocol => RDKafkaRespErr::RD_KAFKA_RESP_ERR__UNKNOWN_PROTOCOL.0,
+            Self::NotImplemented => RDKafkaRespErr::RD_KAFKA_RESP_ERR__NOT_IMPLEMENTED.0,
+            Self::Authentication => RDKafkaRespErr::RD_KAFKA_RESP_ERR__AUTHENTICATION.0,
+            Self::NoOffset => RDKafkaRespErr::RD_KAFKA_RESP_ERR__NO_OFFSET.0,
+            Self::Outdated => RDKafkaRespErr::RD_KAFKA_RESP_ERR__OUTDATED.0,
+            Self::TimedOutQueue => RDKafkaRespErr::RD_KAFKA_RESP_ERR__TIMED_OUT_QUEUE.0,
+            Self::UnsupportedFeature => RDKafkaRespErr::RD_KAFKA_RESP_ERR__UNSUPPORTED_FEATURE.0,
+            Self::WaitCache => RDKafkaRespErr::RD_KAFKA_RESP_ERR__WAIT_CACHE.0,
+            Self::Interrupted => RDKafkaRespErr::RD_KAFKA_RESP_ERR__INTR.0,
+            Self::KeySerialization => RDKafkaRespErr::RD_KAFKA_RESP_ERR__KEY_SERIALIZATION.0,
+            Self::ValueSerialization => RDKafkaRespErr::RD_KAFKA_RESP_ERR__VALUE_SERIALIZATION.0,
+            Self::KeyDeserialization => RDKafkaRespErr::RD_KAFKA_RESP_ERR__KEY_DESERIALIZATION.0,
+            Self::ValueDeserialization => RDKafkaRespErr::RD_KAFKA_RESP_ERR__VALUE_DESERIALIZATION.0,
+            Self::Partial => RDKafkaRespErr::RD_KAFKA_RESP_ERR__PARTIAL.0,
+            Self::ReadOnly => RDKafkaRespErr::RD_KAFKA_RESP_ERR__READ_ONLY.0,
+            Self::NoEnt => RDKafkaRespErr::RD_KAFKA_RESP_ERR__NOENT.0,
+            Self::Underflow => RDKafkaRespErr::RD_KAFKA_RESP_ERR__UNDERFLOW.0,
+            Self::InvalidType => RDKafkaRespErr::RD_KAFKA_RESP_ERR__INVALID_TYPE.0,
+            Self::Retry => RDKafkaRespErr::RD_KAFKA_RESP_ERR__RETRY.0,
+            Self::PurgeQueue => RDKafkaRespErr::RD_KAFKA_RESP_ERR__PURGE_QUEUE.0,
+            Self::PurgeInflight => RDKafkaRespErr::RD_KAFKA_RESP_ERR__PURGE_INFLIGHT.0,
+            Self::Fatal => RDKafkaRespErr::RD_KAFKA_RESP_ERR__FATAL.0,
+            Self::Inconsistent => RDKafkaRespErr::RD_KAFKA_RESP_ERR__INCONSISTENT.0,
+            Self::GaplessGuarantee => RDKafkaRespErr::RD_KAFKA_RESP_ERR__GAPLESS_GUARANTEE.0,
+            Self::PollExceeded => RDKafkaRespErr::RD_KAFKA_RESP_ERR__MAX_POLL_EXCEEDED.0,
+            Self::UnknownBroker => RDKafkaRespErr::RD_KAFKA_RESP_ERR__UNKNOWN_BROKER.0,
+            Self::NotConfigured => RDKafkaRespErr::RD_KAFKA_RESP_ERR__NOT_CONFIGURED.0,
+            Self::Fenced => RDKafkaRespErr::RD_KAFKA_RESP_ERR__FENCED.0,
+            Self::Application => RDKafkaRespErr::RD_KAFKA_RESP_ERR__APPLICATION.0,
+            Self::AssignmentLost => RDKafkaRespErr::RD_KAFKA_RESP_ERR__ASSIGNMENT_LOST.0,
+            Self::Noop => RDKafkaRespErr::RD_KAFKA_RESP_ERR__NOOP.0,
+            Self::AutoOffsetReset => RDKafkaRespErr::RD_KAFKA_RESP_ERR__AUTO_OFFSET_RESET.0,
+            Self::End => RDKafkaRespErr::RD_KAFKA_RESP_ERR__END.0,
+            Self::Unknown => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN.0,
+            Self::NoError => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NO_ERROR.0,
+            Self::OffsetOutOfRange => RDKafkaRespErr::RD_KAFKA_RESP_ERR_OFFSET_OUT_OF_RANGE.0,
+            Self::InvalidMessage => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_MSG.0,
+            Self::UnknownTopicOrPartition => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN_TOPIC_OR_PART.0,
+            Self::InvalidMessageSize => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_MSG_SIZE.0,
+            Self::LeaderNotAvailable => RDKafkaRespErr::RD_KAFKA_RESP_ERR_LEADER_NOT_AVAILABLE.0,
+            Self::NotLeaderForPartition => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_LEADER_FOR_PARTITION.0,
+            Self::RequestTimedOut => RDKafkaRespErr::RD_KAFKA_RESP_ERR_REQUEST_TIMED_OUT.0,
+            Self::BrokerNotAvailable => RDKafkaRespErr::RD_KAFKA_RESP_ERR_BROKER_NOT_AVAILABLE.0,
+            Self::ReplicaNotAvailable => RDKafkaRespErr::RD_KAFKA_RESP_ERR_REPLICA_NOT_AVAILABLE.0,
+            Self::MessageSizeTooLarge => RDKafkaRespErr::RD_KAFKA_RESP_ERR_MSG_SIZE_TOO_LARGE.0,
+            Self::StaleControllerEpoch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_STALE_CTRL_EPOCH.0,
+            Self::OffsetMetadataTooLarge => RDKafkaRespErr::RD_KAFKA_RESP_ERR_OFFSET_METADATA_TOO_LARGE.0,
+            Self::NetworkException => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NETWORK_EXCEPTION.0,
+            Self::CoordinatorLoadInProgress => RDKafkaRespErr::RD_KAFKA_RESP_ERR_COORDINATOR_LOAD_IN_PROGRESS.0,
+            Self::CoordinatorNotAvailable => RDKafkaRespErr::RD_KAFKA_RESP_ERR_COORDINATOR_NOT_AVAILABLE.0,
+            Self::NotCoordinator => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_COORDINATOR.0,
+            Self::InvalidTopic => RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_EXCEPTION.0,
+            Self::MessageBatchTooLarge => RDKafkaRespErr::RD_KAFKA_RESP_ERR_RECORD_LIST_TOO_LARGE.0,
+            Self::NotEnoughReplicas => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_ENOUGH_REPLICAS.0,
+            Self::NotEnoughReplicasAfterAppend => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_ENOUGH_REPLICAS_AFTER_APPEND.0,
+            Self::InvalidRequiredAcks => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_REQUIRED_ACKS.0,
+            Self::IllegalGeneration => RDKafkaRespErr::RD_KAFKA_RESP_ERR_ILLEGAL_GENERATION.0,
+            Self::InconsistentGroupProtocol => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INCONSISTENT_GROUP_PROTOCOL.0,
+            Self::InvalidGroupId => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_GROUP_ID.0,
+            Self::UnknownMemberId => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN_MEMBER_ID.0,
+            Self::InvalidSessionTimeout => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_SESSION_TIMEOUT.0,
+            Self::RebalanceInProgress => RDKafkaRespErr::RD_KAFKA_RESP_ERR_REBALANCE_IN_PROGRESS.0,
+            Self::InvalidCommitOffsetSize => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_COMMIT_OFFSET_SIZE.0,
+            Self::TopicAuthorizationFailed => RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED.0,
+            Self::GroupAuthorizationFailed => RDKafkaRespErr::RD_KAFKA_RESP_ERR_GROUP_AUTHORIZATION_FAILED.0,
+            Self::ClusterAuthorizationFailed => RDKafkaRespErr::RD_KAFKA_RESP_ERR_CLUSTER_AUTHORIZATION_FAILED.0,
+            Self::InvalidTimestamp => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_TIMESTAMP.0,
+            Self::UnsupportedSASLMechanism => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_SASL_MECHANISM.0,
+            Self::IllegalSASLState => RDKafkaRespErr::RD_KAFKA_RESP_ERR_ILLEGAL_SASL_STATE.0,
+            Self::UnsupportedVersion => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_VERSION.0,
+            Self::TopicAlreadyExists => RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_ALREADY_EXISTS.0,
+            Self::InvalidPartitions => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_PARTITIONS.0,
+            Self::InvalidReplicationFactor => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_REPLICATION_FACTOR.0,
+            Self::InvalidReplicaAssignment => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_REPLICA_ASSIGNMENT.0,
+            Self::InvalidConfig => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_CONFIG.0,
+            Self::NotController => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NOT_CONTROLLER.0,
+            Self::InvalidRequest => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_REQUEST.0,
+            Self::UnsupportedForMessageFormat => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_FOR_MESSAGE_FORMAT.0,
+            Self::PolicyViolation => RDKafkaRespErr::RD_KAFKA_RESP_ERR_POLICY_VIOLATION.0,
+            Self::OutOfOrderSequenceNumber => RDKafkaRespErr::RD_KAFKA_RESP_ERR_OUT_OF_ORDER_SEQUENCE_NUMBER.0,
+            Self::DuplicateSequenceNumber => RDKafkaRespErr::RD_KAFKA_RESP_ERR_DUPLICATE_SEQUENCE_NUMBER.0,
+            Self::InvalidProducerEpoch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_PRODUCER_EPOCH.0,
+            Self::InvalidTransactionalState => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_TXN_STATE.0,
+            Self::InvalidProducerIdMapping => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_PRODUCER_ID_MAPPING.0,
+            Self::InvalidTransactionTimeout => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_TRANSACTION_TIMEOUT.0,
+            Self::ConcurrentTransactions => RDKafkaRespErr::RD_KAFKA_RESP_ERR_CONCURRENT_TRANSACTIONS.0,
+            Self::TransactionCoordinatorFenced => RDKafkaRespErr::RD_KAFKA_RESP_ERR_TRANSACTION_COORDINATOR_FENCED.0,
+            Self::SecurityDisabled => RDKafkaRespErr::RD_KAFKA_RESP_ERR_SECURITY_DISABLED.0,
+            Self::OperationNotAttempted => RDKafkaRespErr::RD_KAFKA_RESP_ERR_OPERATION_NOT_ATTEMPTED.0,
+            Self::KafkaStorageError => RDKafkaRespErr::RD_KAFKA_RESP_ERR_KAFKA_STORAGE_ERROR.0,
+            Self::LogDirNotFound => RDKafkaRespErr::RD_KAFKA_RESP_ERR_LOG_DIR_NOT_FOUND.0,
+            Self::SaslAuthenticationFailed => RDKafkaRespErr::RD_KAFKA_RESP_ERR_SASL_AUTHENTICATION_FAILED.0,
+            Self::UnknownProducerId => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN_PRODUCER_ID.0,
+            Self::ReassignmentInProgress => RDKafkaRespErr::RD_KAFKA_RESP_ERR_REASSIGNMENT_IN_PROGRESS.0,
+            Self::DelegationTokenAuthDisabled => RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_AUTH_DISABLED.0,
+            Self::DelegationTokenNotFound => RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_NOT_FOUND.0,
+            Self::DelegationTokenOwnerMismatch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_OWNER_MISMATCH.0,
+            Self::DelegationTokenRequestNotAllowed => RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_REQUEST_NOT_ALLOWED.0,
+            Self::DelegationTokenExpired => RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_EXPIRED.0,
+            Self::InvalidPrincipalType => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_PRINCIPAL_TYPE.0,
+            Self::NonEmptyGroup => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NON_EMPTY_GROUP.0,
+            Self::GroupIdNotFound => RDKafkaRespErr::RD_KAFKA_RESP_ERR_GROUP_ID_NOT_FOUND.0,
+            Self::FetchSessionIdNotFound => RDKafkaRespErr::RD_KAFKA_RESP_ERR_FETCH_SESSION_ID_NOT_FOUND.0,
+            Self::InvalidFetchSessionEpoch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_FETCH_SESSION_EPOCH.0,
+            Self::ListenerNotFound => RDKafkaRespErr::RD_KAFKA_RESP_ERR_LISTENER_NOT_FOUND.0,
+            Self::TopicDeletionDisabled => RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_DELETION_DISABLED.0,
+            Self::FencedLeaderEpoch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_FENCED_LEADER_EPOCH.0,
+            Self::UnknownLeaderEpoch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN_LEADER_EPOCH.0,
+            Self::UnsupportedCompressionType => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_COMPRESSION_TYPE.0,
+            Self::StaleBrokerEpoch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_STALE_BROKER_EPOCH.0,
+            Self::OffsetNotAvailable => RDKafkaRespErr::RD_KAFKA_RESP_ERR_OFFSET_NOT_AVAILABLE.0,
+            Self::MemberIdRequired => RDKafkaRespErr::RD_KAFKA_RESP_ERR_MEMBER_ID_REQUIRED.0,
+            Self::PreferredLeaderNotAvailable => RDKafkaRespErr::RD_KAFKA_RESP_ERR_PREFERRED_LEADER_NOT_AVAILABLE.0,
+            Self::GroupMaxSizeReached => RDKafkaRespErr::RD_KAFKA_RESP_ERR_GROUP_MAX_SIZE_REACHED.0,
+            Self::FencedInstanceId => RDKafkaRespErr::RD_KAFKA_RESP_ERR_FENCED_INSTANCE_ID.0,
+            Self::EligibleLeadersNotAvailable => RDKafkaRespErr::RD_KAFKA_RESP_ERR_ELIGIBLE_LEADERS_NOT_AVAILABLE.0,
+            Self::ElectionNotNeeded => RDKafkaRespErr::RD_KAFKA_RESP_ERR_ELECTION_NOT_NEEDED.0,
+            Self::NoReassignmentInProgress => RDKafkaRespErr::RD_KAFKA_RESP_ERR_NO_REASSIGNMENT_IN_PROGRESS.0,
+            Self::GroupSubscribedToTopic => RDKafkaRespErr::RD_KAFKA_RESP_ERR_GROUP_SUBSCRIBED_TO_TOPIC.0,
+            Self::InvalidRecord => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_RECORD.0,
+            Self::UnstableOffsetCommit => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSTABLE_OFFSET_COMMIT.0,
+            Self::ThrottlingQuotaExceeded => RDKafkaRespErr::RD_KAFKA_RESP_ERR_THROTTLING_QUOTA_EXCEEDED.0,
+            Self::ProducerFenced => RDKafkaRespErr::RD_KAFKA_RESP_ERR_PRODUCER_FENCED.0,
+            Self::ResourceNotFound => RDKafkaRespErr::RD_KAFKA_RESP_ERR_RESOURCE_NOT_FOUND.0,
+            Self::DuplicateResource => RDKafkaRespErr::RD_KAFKA_RESP_ERR_DUPLICATE_RESOURCE.0,
+            Self::UnacceptableCredential => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNACCEPTABLE_CREDENTIAL.0,
+            Self::InconsistentVoterSet => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INCONSISTENT_VOTER_SET.0,
+            Self::InvalidUpdateVersion => RDKafkaRespErr::RD_KAFKA_RESP_ERR_INVALID_UPDATE_VERSION.0,
+            Self::FeatureUpdateFailed => RDKafkaRespErr::RD_KAFKA_RESP_ERR_FEATURE_UPDATE_FAILED.0,
+            Self::PrincipalDeserializationFailure => RDKafkaRespErr::RD_KAFKA_RESP_ERR_PRINCIPAL_DESERIALIZATION_FAILURE.0,
+            Self::EndAll => RDKafkaRespErr::RD_KAFKA_RESP_ERR_END_ALL.0,
+            Self::LogTruncation => RDKafkaRespErr::RD_KAFKA_RESP_ERR__LOG_TRUNCATION.0,
+            Self::InvalidDifferentRecord => RDKafkaRespErr::RD_KAFKA_RESP_ERR__INVALID_DIFFERENT_RECORD.0,
+            Self::DestroyBroker => RDKafkaRespErr::RD_KAFKA_RESP_ERR__DESTROY_BROKER.0,
+            Self::BrokerPopulation => RDKafkaRespErr::RD_KAFKA_RESP_ERR__BROKER_POPULATION.0,
+            Self::PartitionPopulation => RDKafkaRespErr::RD_KAFKA_RESP_ERR__PARTITION_POPULATION.0,
+            Self::UnknownTopicId => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN_TOPIC_ID.0,
+            Self::FencedMemberEpoch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_FENCED_MEMBER_EPOCH.0,
+            Self::UnreleasedInstanceId => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNRELEASED_INSTANCE_ID.0,
+            Self::UnsupportedAssignor => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNSUPPORTED_ASSIGNOR.0,
+            Self::StaleMemberEpoch => RDKafkaRespErr::RD_KAFKA_RESP_ERR_STALE_MEMBER_EPOCH.0,
+            Self::UnknownSubscriptionId => RDKafkaRespErr::RD_KAFKA_RESP_ERR_UNKNOWN_SUBSCRIPTION_ID.0,
+            Self::TelemetryTooLarge => RDKafkaRespErr::RD_KAFKA_RESP_ERR_TELEMETRY_TOO_LARGE.0,
+            Self::RebootstrapRequired => RDKafkaRespErr::RD_KAFKA_RESP_ERR_REBOOTSTRAP_REQUIRED.0,
+            Self::TransactionalIdAuthorizationFailed => RDKafkaRespErr::RD_KAFKA_RESP_ERR_TRANSACTIONAL_ID_AUTHORIZATION_FAILED.0,
+            Self::DelegationTokenAuthorizationFailed => RDKafkaRespErr::RD_KAFKA_RESP_ERR_DELEGATION_TOKEN_AUTHORIZATION_FAILED.0,
+            Self::UnknownCode(code) => code,
+        }
+    }
+}
+
 impl fmt::Display for RDKafkaErrorCode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let description = match RDKafkaRespErr::try_from(*self as i32) {
-            Ok(err) => {
-                let cstr = unsafe { bindings::rd_kafka_err2str(err) };
-                unsafe { CStr::from_ptr(cstr) }
-                    .to_string_lossy()
-                    .into_owned()
-            }
-            Err(_) => "Unknown error".to_owned(),
-        };
-
-        write!(f, "{:?} ({})", self, description)
+        let cstr = unsafe { bindings::rd_kafka_err2str(RDKafkaRespErr(self.raw_code())) };
+        f.write_str(&unsafe { CStr::from_ptr(cstr) }.to_string_lossy())
     }
 }
 

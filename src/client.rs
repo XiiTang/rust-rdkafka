@@ -25,13 +25,37 @@ use rdkafka_sys::types::*;
 use crate::admin::NativeEvent;
 use crate::config::{ClientConfig, NativeClientConfig, RDKafkaLogLevel};
 use crate::consumer::RebalanceProtocol;
-use crate::error::{IsError, KafkaError, KafkaResult};
+use crate::error::{IsError, KafkaError, KafkaResult, RDKafkaError};
 use crate::groups::GroupList;
 use crate::log::{debug, error, info, trace, warn};
 use crate::metadata::Metadata;
 use crate::mocking::MockCluster;
 use crate::statistics::Statistics;
 use crate::util::{ErrBuf, KafkaDrop, NativePtr, Timeout};
+
+/// One failed group-list subrequest with its broker and request context.
+#[derive(Debug)]
+pub struct BrokerRequestError {
+    /// Addressed broker id.
+    pub broker_id: i32,
+    /// Addressed broker authority.
+    pub peer: String,
+    /// ListGroups or DescribeGroups API key.
+    pub api_key: i16,
+    /// Selected version, absent if construction failed before selection.
+    pub api_version: Option<i16>,
+    /// Native error and its own decoded reply, if any.
+    pub error: KafkaError,
+}
+/// Completed groups and all failed subrequests, independent of overall status.
+pub struct GroupListOutcome {
+    /// Completely decoded groups, if a list was returned.
+    pub groups: Option<GroupList>,
+    /// Every callback-observed failed subrequest of this call.
+    pub broker_errors: Vec<BrokerRequestError>,
+    /// Unchanged overall native status.
+    pub error: Option<KafkaError>,
+}
 
 /// Client-level context.
 ///
@@ -399,7 +423,8 @@ impl<C: ClientContext> Client<C> {
 
     fn handle_error_event(&self, event: *mut RDKafkaEvent) {
         let rdkafka_err = unsafe { rdsys::rd_kafka_event_error(event) };
-        let error = KafkaError::Global(rdkafka_err.into());
+        let error = unsafe { KafkaError::Global(rdkafka_err.into())
+            .with_reply(rdsys::rd_kafka_event_broker_reply(event)) };
         let reason =
             unsafe { CStr::from_ptr(rdsys::rd_kafka_event_error_string(event)).to_string_lossy() };
         self.context().error(error, reason.trim());
@@ -419,18 +444,21 @@ impl<C: ClientContext> Client<C> {
             (1, None)
         };
         trace!("Starting metadata fetch");
+        let mut native_error = ptr::null_mut();
         let ret = unsafe {
-            rdsys::rd_kafka_metadata(
+            rdsys::rd_kafka_metadata_with_error(
                 self.native_ptr(),
                 flag,
                 native_topic.map(|t| t.ptr()).unwrap_or_else(ptr::null_mut),
                 &mut metadata_ptr as *mut *const RDKafkaMetadata,
                 timeout.into().as_millis(),
+                &mut native_error,
             )
         };
         trace!("Metadata fetch completed");
+        let native_error = unsafe { RDKafkaError::from_ptr(native_error) };
         if ret.is_error() {
-            return Err(KafkaError::MetadataFetch(ret.into()));
+            return Err(KafkaError::MetadataFetch(ret.into()).with_native_error(&native_error));
         }
 
         Ok(unsafe { Metadata::from_ptr(metadata_ptr) })
@@ -446,18 +474,21 @@ impl<C: ClientContext> Client<C> {
         let mut low = -1;
         let mut high = -1;
         let topic_c = CString::new(topic.to_string())?;
+        let mut native_error = ptr::null_mut();
         let ret = unsafe {
-            rdsys::rd_kafka_query_watermark_offsets(
+            rdsys::rd_kafka_query_watermark_offsets_with_error(
                 self.native_ptr(),
                 topic_c.as_ptr(),
                 partition,
                 &mut low as *mut i64,
                 &mut high as *mut i64,
                 timeout.into().as_millis(),
+                &mut native_error,
             )
         };
+        let native_error = unsafe { RDKafkaError::from_ptr(native_error) };
         if ret.is_error() {
-            return Err(KafkaError::MetadataFetch(ret.into()));
+            return Err(KafkaError::MetadataFetch(ret.into()).with_native_error(&native_error));
         }
         Ok((low, high))
     }
@@ -503,6 +534,53 @@ impl<C: ClientContext> Client<C> {
         }
 
         Ok(unsafe { GroupList::from_ptr(group_list_ptr) })
+    }
+
+    /// Fetches group data and failed broker subrequests independently.
+    pub fn fetch_group_list_with_outcome<T: Into<Timeout>>(
+        &self, group: Option<&str>, timeout: T,
+    ) -> KafkaResult<GroupListOutcome> {
+        let group = group.map(CString::new).transpose()?;
+        let mut groups = ptr::null();
+        let mut error = ptr::null_mut();
+        let mut broker_errors = ptr::null_mut();
+        let mut count = 0;
+        let status = unsafe { rdsys::rd_kafka_list_groups_with_error(
+            self.native_ptr(), group.as_ref().map_or(ptr::null(), |g| g.as_ptr()),
+            &mut groups, timeout.into().as_millis(), &mut error,
+            &mut broker_errors, &mut count) };
+        let native_error = unsafe { RDKafkaError::from_ptr(error) };
+        let groups = (!groups.is_null()).then(|| unsafe { GroupList::from_ptr(groups) });
+        struct Errors(*mut rdsys::rd_kafka_group_list_broker_error_t, usize);
+        impl Drop for Errors {
+            fn drop(&mut self) {
+                unsafe { rdsys::rd_kafka_group_list_broker_errors_destroy(self.0, self.1) }
+            }
+        }
+        let errors = Errors(broker_errors, count);
+        let mut broker_errors = Vec::with_capacity(count);
+        for i in 0..count {
+            let item = unsafe { &*errors.0.add(i) };
+            let code = unsafe { rdsys::rd_kafka_error_code(item.error) };
+            let error = unsafe { KafkaError::GroupListFetch(code.into())
+                .with_reply(rdsys::rd_kafka_error_broker_reply(item.error)) };
+            broker_errors.push(BrokerRequestError {
+                broker_id: item.broker_id,
+                peer: unsafe { CStr::from_ptr(item.peer) }.to_str()
+                    .expect("native broker authority is UTF-8").to_owned(),
+                api_key: item.api_key,
+                api_version: (item.api_version >= 0).then_some(item.api_version),
+                error,
+            });
+        }
+        Ok(GroupListOutcome { groups, broker_errors, error: status.is_error()
+            .then(|| KafkaError::GroupListFetch(status.into()).with_native_error(&native_error)) })
+    }
+
+    /// Copies the existing first fatal result, including its original reply.
+    pub fn fatal_error_details(&self) -> Option<RDKafkaError> {
+        let ptr = unsafe { rdsys::rd_kafka_fatal_error_copy(self.native_ptr()) };
+        (!ptr.is_null()).then(|| unsafe { RDKafkaError::from_ptr(ptr) })
     }
 
     /// Returns the first fatal error set on this client instance, or `None` if

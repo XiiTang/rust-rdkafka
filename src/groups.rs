@@ -69,10 +69,41 @@ impl GroupMemberInfo {
     }
 }
 
+/// Broker which answered a group description.
+#[derive(Debug, Clone)]
+pub struct Broker {
+    /// Native broker id.
+    pub id: i32,
+    /// Broker host name.
+    pub host: String,
+    /// Broker port.
+    pub port: i32,
+}
+
 /// Group information container.
 pub struct GroupInfo(RDKafkaGroupInfo);
 
 impl GroupInfo {
+    /// Returns the group's actual native error independently of provenance.
+    pub fn error(&self) -> Option<crate::error::KafkaError> {
+        use crate::error::IsError;
+        self.0.err.is_error().then(|| unsafe {
+            crate::error::KafkaError::GroupListFetch(self.0.err.into())
+                .with_reply(rdkafka_sys::rd_kafka_group_info_broker_reply(&self.0))
+        })
+    }
+    /// Returns the broker which answered this description.
+    pub fn broker(&self) -> Broker {
+        Broker { id: self.0.broker.id, port: self.0.broker.port,
+            host: unsafe { CStr::from_ptr(self.0.broker.host) }.to_str()
+                .expect("native group broker host is UTF-8").to_owned() }
+    }
+    /// Returns only this group's own decoded broker result.
+    pub fn broker_reply(&self) -> Option<crate::error::BrokerReply> {
+        unsafe { crate::error::BrokerReply::from_ptr(
+            rdkafka_sys::rd_kafka_group_info_broker_reply(&self.0)) }
+    }
+
     /// Returns the name of the group.
     pub fn name(&self) -> &str {
         unsafe {

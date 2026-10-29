@@ -9,6 +9,7 @@ bindgen \
     --no-doc-comments \
     --no-layout-tests \
     --rustified-enum ".*" \
+    --newtype-enum "^rd_kafka_resp_err_t$" \
     --allowlist-function "rd_kafka.*" \
     --allowlist-type "rd_kafka.*" \
     --allowlist-var "rd_kafka.*|RD_KAFKA_.*" \
@@ -16,14 +17,10 @@ bindgen \
     --blocklist-function "rd_kafka_conf_set_open_cb" \
     --blocklist-function "rd_kafka_conf_set_resolve_cb" \
     --raw-line "use libc::{FILE, sockaddr, c_int, c_void, c_char};" \
-    --raw-line "use num_enum::TryFromPrimitive;" \
     --default-macro-constant-type "signed" \
     --rust-edition 2021 \
     --rust-target 1.74 \
     "bindings.h" -o "src/bindings.rs"
-
-# Derive TryFromPrimitive for rd_kafka_resp_err_t.
-perl -i -p0e 's/#\[derive\((.*)\)\]\npub enum rd_kafka_resp_err_t/#\[derive($1, TryFromPrimitive)\]\npub enum rd_kafka_resp_err_t/s' src/bindings.rs
 
 # Clean up the bindings a bit.
 

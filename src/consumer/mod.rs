@@ -21,7 +21,7 @@ pub mod stream_consumer;
 
 // Re-exports.
 #[doc(inline)]
-pub use self::base_consumer::BaseConsumer;
+pub use self::base_consumer::{BaseConsumer, PartitionOutcome, CommitOutcome};
 #[doc(inline)]
 pub use self::stream_consumer::{MessageStream, StreamConsumer};
 

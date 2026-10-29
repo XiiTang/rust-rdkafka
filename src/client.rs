@@ -166,6 +166,11 @@ impl NativeClient {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn destruction_probe(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.ptr.destruction_probe()
+    }
+
     /// Returns the wrapped pointer to RDKafka.
     pub fn ptr(&self) -> *mut RDKafka {
         self.ptr.ptr()
@@ -530,14 +535,14 @@ impl<C: ClientContext> Client<C> {
     /// it was generated from.
     pub(crate) fn native_topic(&self, topic: &str) -> KafkaResult<NativeTopic> {
         let topic_c = CString::new(topic.to_string())?;
-        Ok(unsafe {
+        unsafe {
             NativeTopic::from_ptr(rdsys::rd_kafka_topic_new(
                 self.native_ptr(),
                 topic_c.as_ptr(),
                 ptr::null_mut(),
             ))
-            .unwrap()
-        })
+        }
+        .ok_or_else(|| KafkaError::Global(unsafe { rdsys::rd_kafka_last_error() }.into()))
     }
 
     /// Returns a NativeQueue from the current client. The NativeQueue shouldn't
@@ -590,6 +595,30 @@ mod tests {
 
     use super::*;
     use crate::config::ClientConfig;
+
+    #[test]
+    fn refused_topic_creation_is_a_typed_error() {
+        let config = ClientConfig::new()
+            .set("partition.population.max", "1")
+            .clone();
+        let client = Client::new(
+            &config,
+            config.create_native_config().unwrap(),
+            RDKafkaType::RD_KAFKA_PRODUCER,
+            DefaultClientContext,
+        )
+        .unwrap();
+        let first = client.native_topic("one").unwrap();
+        assert!(matches!(
+            client.native_topic("two"),
+            Err(KafkaError::Global(RDKafkaErrorCode::PartitionPopulation))
+        ));
+        assert_eq!(
+            client.fatal_error().unwrap().0,
+            RDKafkaErrorCode::PartitionPopulation
+        );
+        drop(first);
+    }
 
     #[test]
     fn test_client() {

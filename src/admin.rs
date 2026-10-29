@@ -498,9 +498,14 @@ impl NativeEvent {
         self.native.as_ref().unwrap().ptr()
     }
     #[cfg(test)]
-    pub(crate) fn destruction_probe(&self) -> Arc<AtomicBool> { self.destroyed.clone() }
+    pub(crate) fn destruction_probe(&self) -> Arc<AtomicBool> {
+        self.destroyed.clone()
+    }
     pub(crate) fn keep(&self, keep: Arc<dyn Send + Sync + 'static>) {
-        self.keeps.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(keep);
+        self.keeps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(keep);
     }
 }
 

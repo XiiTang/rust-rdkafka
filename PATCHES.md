@@ -106,4 +106,14 @@ Regression owner: `producer::base_producer::ownership_tests`, including actual
 retained event Arcs for success/error and callback unwind, forced unread reports,
 refused send and conversion multiplicity. The `native-test-adapter` feature exposes
 only a fixture hook after callbacks while the actual report event remains live;
-release users do not enable it. Work-branch verification is recorded after the run.
+release users do not enable it. The cfg(test) probes mark completion after the
+actual C client/queue/event destructors; unread keeps assert both native owners
+are gone before reclamation. Native sends exercise duplicate and null encodings,
+not a separate fake conversion owner. A refused native topic factory now returns
+its typed last error through the existing KafkaResult instead of unwrapping NULL.
+
+macOS arm64 focused run: `cargo test -p rdkafka --lib --no-default-features
+--features cmake-build,tokio,ssl-vendored,libz-static,zstd -- ownership_tests
+refused_topic_creation_is_a_typed_error` passed all six named tests. The native
+gitlink is 1f212020e6bbcd12d8cad34d5346a2f5243443ab. Strict Clippy and the consumer
+build are recorded separately; no full integration/platform lane is claimed.

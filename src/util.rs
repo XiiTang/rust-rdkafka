@@ -322,6 +322,8 @@ where
     T: KafkaDrop,
 {
     ptr: NonNull<T>,
+    #[cfg(test)]
+    destroyed: std::sync::OnceLock<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl<T> Drop for NativePtr<T>
@@ -332,6 +334,10 @@ where
         trace!("Destroying {}: {:?}", T::TYPE, self.ptr);
         unsafe { T::DROP(self.ptr.as_ptr()) }
         trace!("Destroyed {}: {:?}", T::TYPE, self.ptr);
+        #[cfg(test)]
+        if let Some(probe) = self.destroyed.get() {
+            probe.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 }
 
@@ -366,7 +372,16 @@ where
     T: KafkaDrop,
 {
     pub(crate) unsafe fn from_ptr(ptr: *mut T) -> Option<Self> {
-        NonNull::new(ptr).map(|ptr| Self { ptr })
+        NonNull::new(ptr).map(|ptr| Self {
+            ptr,
+            #[cfg(test)]
+            destroyed: Default::default(),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn destruction_probe(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.destroyed.get_or_init(Default::default).clone()
     }
 
     pub(crate) fn ptr(&self) -> *mut T {

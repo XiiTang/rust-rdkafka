@@ -341,7 +341,9 @@ impl<'a> BorrowedMessage<'a> {
     }
 
     #[cfg(test)]
-    pub(crate) fn event_for_tests(&self) -> Arc<NativeEvent> { self._event.clone() }
+    pub(crate) fn event_for_tests(&self) -> Arc<NativeEvent> {
+        self._event.clone()
+    }
 
     /// Native delivery persistence status; local enqueue is not persistence.
     pub fn persistence_status(&self) -> &'static str {

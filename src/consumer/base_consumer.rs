@@ -26,7 +26,7 @@ use crate::log::trace;
 use crate::message::{BorrowedMessage, Message};
 use crate::metadata::Metadata;
 use crate::topic_partition_list::{Offset, TopicPartitionList};
-use crate::util::{NativePtr, Timeout, cstr_to_owned};
+use crate::util::{cstr_to_owned, NativePtr, Timeout};
 
 /// Native seek evidence. An overall timeout does not discard completed partitions.
 #[derive(Debug)]
@@ -209,10 +209,7 @@ where
         }
     }
 
-    fn handle_fetch_event(
-        &self,
-        event: NativeEvent,
-    ) -> Option<KafkaResult<BorrowedMessage<'_>>> {
+    fn handle_fetch_event(&self, event: NativeEvent) -> Option<KafkaResult<BorrowedMessage<'_>>> {
         unsafe {
             NativePtr::from_ptr(rdsys::rd_kafka_event_message_next(event.ptr()) as *mut _)
                 .map(|ptr| BorrowedMessage::from_client(ptr, Arc::new(event), self.client()))

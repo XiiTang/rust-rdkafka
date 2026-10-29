@@ -58,6 +58,7 @@ use rdkafka_sys as rdsys;
 use rdkafka_sys::rd_kafka_vtype_t::*;
 use rdkafka_sys::types::*;
 
+use crate::admin::NativeEvent;
 use crate::client::{Client, EventPollResult, NativeQueue};
 use crate::config::{ClientConfig, FromClientConfig, FromClientConfigAndContext};
 use crate::consumer::ConsumerGroupMetadata;
@@ -69,7 +70,6 @@ use crate::producer::{
 };
 use crate::topic_partition_list::TopicPartitionList;
 use crate::util::{Deadline, IntoOpaque, Timeout};
-use crate::admin::NativeEvent;
 
 pub use crate::message::DeliveryResult;
 
@@ -459,7 +459,9 @@ where
 
     fn handle_delivery_report_event(&self, event: NativeEvent) {
         #[cfg(test)]
-        if self.leave_reports_unread.load(Ordering::SeqCst) { return; }
+        if self.leave_reports_unread.load(Ordering::SeqCst) {
+            return;
+        }
         let max_messages = unsafe { rdsys::rd_kafka_event_message_count(event.ptr()) };
         let messages: Vec<*const RDKafkaMessage> = Vec::with_capacity(max_messages);
 
@@ -483,7 +485,9 @@ where
         #[cfg(feature = "native-test-adapter")]
         {
             let hook = self.event_hook.lock().unwrap().clone();
-            if let Some(hook) = hook { hook(); }
+            if let Some(hook) = hook {
+                hook();
+            }
         }
     }
 
@@ -914,13 +918,23 @@ mod ownership_tests {
     use std::time::Instant;
 
     struct Kept {
+        native_destroyed: Vec<Arc<AtomicBool>>,
         drops: Arc<AtomicUsize>,
         event_destroyed: OnceLock<Arc<AtomicBool>>,
     }
     impl Drop for Kept {
         fn drop(&mut self) {
+            for probe in &self.native_destroyed {
+                assert!(
+                    probe.load(Ordering::SeqCst),
+                    "client and queue destruction must precede unread reclaim"
+                );
+            }
             if let Some(destroyed) = self.event_destroyed.get() {
-                assert!(destroyed.load(Ordering::SeqCst), "native event must be destroyed before its keep");
+                assert!(
+                    destroyed.load(Ordering::SeqCst),
+                    "native event must be destroyed before its keep"
+                );
             }
             self.drops.fetch_add(1, Ordering::SeqCst);
         }
@@ -935,23 +949,57 @@ mod ownership_tests {
     impl ProducerContext for Reports {
         type DeliveryOpaque = Arc<Kept>;
         fn delivery(&self, result: &DeliveryResult<'_>, opaque: Self::DeliveryOpaque) {
-            let message = match result { Ok(message) | Err((_, message)) => message };
+            let message = match result {
+                Ok(message) | Err((_, message)) => message,
+            };
             let event = message.event_for_tests();
-            opaque.event_destroyed.set(event.destruction_probe()).unwrap();
+            opaque
+                .event_destroyed
+                .set(event.destruction_probe())
+                .unwrap();
             message.keep_with_event(opaque);
             self.count.fetch_add(1, Ordering::SeqCst);
-            if self.unwind { panic!("delivery callback unwind"); }
+            if self.unwind {
+                panic!("delivery callback unwind");
+            }
             self.events.lock().unwrap().push(event);
         }
     }
-    fn producer(bootstrap: &str, reports: Reports) -> BaseProducer<Reports> {
-        ClientConfig::new().set("bootstrap.servers", bootstrap)
-            .set("message.max.bytes", "1000").create_with_context(reports).unwrap()
+    struct ReleaseEvents(Arc<Mutex<Vec<Arc<NativeEvent>>>>);
+    impl Drop for ReleaseEvents {
+        fn drop(&mut self) {
+            self.0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
+        }
     }
-    fn send(producer: &BaseProducer<Reports>, drops: &Arc<AtomicUsize>, topic: &str, payload: &[u8]) -> bool {
-        producer.send(BaseRecord::<(), _, _>::with_opaque_to(topic, Arc::new(Kept {
-            drops: drops.clone(), event_destroyed: OnceLock::new(),
-        })).payload(payload)).is_ok()
+    fn producer(bootstrap: &str, reports: Reports) -> BaseProducer<Reports> {
+        ClientConfig::new()
+            .set("bootstrap.servers", bootstrap)
+            .set("message.max.bytes", "1000")
+            .create_with_context(reports)
+            .unwrap()
+    }
+    fn send(
+        producer: &BaseProducer<Reports>,
+        drops: &Arc<AtomicUsize>,
+        topic: &str,
+        payload: &[u8],
+    ) -> bool {
+        producer
+            .send(
+                BaseRecord::<(), _, _>::with_opaque_to(
+                    topic,
+                    Arc::new(Kept {
+                        native_destroyed: vec![],
+                        drops: drops.clone(),
+                        event_destroyed: OnceLock::new(),
+                    }),
+                )
+                .payload(payload),
+            )
+            .is_ok()
     }
     fn poll_until(producer: &BaseProducer<Reports>, count: usize) {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -964,22 +1012,44 @@ mod ownership_tests {
     fn event_keeps_outlive_success_error_callbacks_and_actual_native_destruction() {
         let cluster = MockCluster::new(1).unwrap();
         cluster.create_topic("keeps", 1, 1).unwrap();
+        let bootstrap = cluster.bootstrap_servers();
         for success in [true, false] {
             let drops = Arc::new(AtomicUsize::new(0));
             let reports = Reports::default();
-            let p = producer(if success { &cluster.bootstrap_servers() } else { "127.0.0.1:1" }, reports.clone());
-            for _ in 0..3 { assert!(send(&p, &drops, "keeps", b"v")); }
-            if !success { p.purge(PurgeConfig::default().queue().inflight()); }
+            let p = producer(
+                if success { &bootstrap } else { "127.0.0.1:1" },
+                reports.clone(),
+            );
+            let _release = ReleaseEvents(reports.events.clone());
+            for _ in 0..3 {
+                assert!(send(&p, &drops, "keeps", b"v"));
+            }
+            if !success {
+                p.purge(PurgeConfig::default().queue().inflight());
+            }
             poll_until(&p, 3);
-            assert_eq!(drops.load(Ordering::SeqCst), 0, "callback return must not refund data");
+            assert_eq!(
+                drops.load(Ordering::SeqCst),
+                0,
+                "callback return must not refund data"
+            );
             if !success {
                 let events = reports.events.lock().unwrap();
-                assert!(events.iter().any(|event| unsafe { rdsys::rd_kafka_event_message_count(event.ptr()) } >= 2), "hold an actual multi-record event");
+                assert!(
+                    events
+                        .windows(2)
+                        .any(|pair| Arc::ptr_eq(&pair[0], &pair[1])),
+                    "hold an actual multi-record event"
+                );
             }
             reports.events.lock().unwrap().clear();
             assert_eq!(drops.load(Ordering::SeqCst), 3);
             assert!(!send(&p, &drops, "keeps", &[0; 2000]));
-            assert_eq!(drops.load(Ordering::SeqCst), 4, "refused send returns its original opaque");
+            assert_eq!(
+                drops.load(Ordering::SeqCst),
+                4,
+                "refused send returns its original opaque"
+            );
             drop(p);
             assert_eq!(drops.load(Ordering::SeqCst), 4);
         }
@@ -987,7 +1057,10 @@ mod ownership_tests {
     #[test]
     fn callback_unwind_keeps_native_destruction_before_refund() {
         let drops = Arc::new(AtomicUsize::new(0));
-        let reports = Reports { unwind: true, ..Reports::default() };
+        let reports = Reports {
+            unwind: true,
+            ..Reports::default()
+        };
         let p = producer("127.0.0.1:1", reports);
         assert!(send(&p, &drops, "unwind", b"v"));
         p.purge(PurgeConfig::default().queue().inflight());
@@ -1002,7 +1075,20 @@ mod ownership_tests {
         let reports = Reports::default();
         let p = producer("127.0.0.1:1", reports.clone());
         p.leave_reports_unread.store(true, Ordering::SeqCst);
-        for _ in 0..3 { assert!(send(&p, &drops, "unread", b"v")); }
+        let probes = vec![
+            p.client.native_client().destruction_probe(),
+            p.queue.destruction_probe(),
+        ];
+        for _ in 0..3 {
+            let keep = Arc::new(Kept {
+                native_destroyed: probes.clone(),
+                drops: drops.clone(),
+                event_destroyed: OnceLock::new(),
+            });
+            assert!(p
+                .send(BaseRecord::<(), _, _>::with_opaque_to("unread", keep).payload(b"v"))
+                .is_ok());
+        }
         drop(p); // Real upstream purge/flush; fixture leaves opaques unconverted.
         assert_eq!(reports.count.load(Ordering::SeqCst), 0);
         assert_eq!(drops.load(Ordering::SeqCst), 3);
@@ -1010,7 +1096,9 @@ mod ownership_tests {
     static CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
     struct Converted(usize);
     impl IntoOpaque for Converted {
-        fn into_ptr(self) -> *mut c_void { Box::into_raw(Box::new(self)).cast() }
+        fn into_ptr(self) -> *mut c_void {
+            Box::into_raw(Box::new(self)).cast()
+        }
         unsafe fn from_ptr(ptr: *mut c_void) -> Self {
             CONVERSIONS.fetch_add(1, Ordering::SeqCst);
             *unsafe { Box::from_raw(ptr.cast::<Self>()) }
@@ -1020,23 +1108,63 @@ mod ownership_tests {
     impl ClientContext for Converting {}
     impl ProducerContext for Converting {
         type DeliveryOpaque = Converted;
-        fn delivery(&self, _: &DeliveryResult<'_>, opaque: Converted) { assert!(opaque.0 < 3); }
+        fn delivery(&self, _: &DeliveryResult<'_>, opaque: Converted) {
+            assert!(opaque.0 < 3);
+        }
     }
     #[test]
     fn unread_opaques_without_drop_glue_and_duplicate_encodings_are_reclaimed() {
         assert!(!mem::needs_drop::<Converted>());
-        let p: BaseProducer<Converting> = ClientConfig::new().set("bootstrap.servers", "127.0.0.1:1").create_with_context(Converting).unwrap();
+        let p: BaseProducer<Converting> = ClientConfig::new()
+            .set("bootstrap.servers", "127.0.0.1:1")
+            .create_with_context(Converting)
+            .unwrap();
         p.leave_reports_unread.store(true, Ordering::SeqCst);
-        for i in 0..3 { assert!(p.send(BaseRecord::<(), _, _>::with_opaque_to("converted", Converted(i)).payload(b"v")).is_ok()); }
+        for i in 0..3 {
+            assert!(p
+                .send(
+                    BaseRecord::<(), _, _>::with_opaque_to("converted", Converted(i)).payload(b"v")
+                )
+                .is_ok());
+        }
         drop(p);
         assert_eq!(CONVERSIONS.load(Ordering::SeqCst), 3);
-        // Unit/usize opaque encodings may repeat, including null. Exercise the
-        // same conversion set, which counts entries rather than unique pointers.
-        let set = Outstanding::<usize>::new();
-        for value in [0, 0, 7, 7] { set.insert(value as *mut c_void); }
-        assert_eq!(unsafe { set.take(ptr::null_mut()) }, 0);
-        assert_eq!(set.pointers().get(&0), Some(&1));
-        assert_eq!(set.pointers().get(&7), Some(&2));
-        drop(set);
+    }
+    static DUPLICATE_CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
+    struct Duplicate(usize);
+    impl IntoOpaque for Duplicate {
+        fn into_ptr(self) -> *mut c_void {
+            self.0 as *mut c_void
+        }
+        unsafe fn from_ptr(ptr: *mut c_void) -> Self {
+            DUPLICATE_CONVERSIONS.fetch_add(1, Ordering::SeqCst);
+            Duplicate(ptr as usize)
+        }
+    }
+    struct Duplicating;
+    impl ClientContext for Duplicating {}
+    impl ProducerContext for Duplicating {
+        type DeliveryOpaque = Duplicate;
+        fn delivery(&self, _: &DeliveryResult<'_>, _: Duplicate) {
+            panic!("reports deliberately unread");
+        }
+    }
+    #[test]
+    fn native_unread_duplicate_and_null_encodings_each_reclaim_once() {
+        let p: BaseProducer<Duplicating> = ClientConfig::new()
+            .set("bootstrap.servers", "127.0.0.1:1")
+            .create_with_context(Duplicating)
+            .unwrap();
+        p.leave_reports_unread.store(true, Ordering::SeqCst);
+        for encoding in [0, 0, 7, 7] {
+            assert!(p
+                .send(
+                    BaseRecord::<(), _, _>::with_opaque_to("duplicates", Duplicate(encoding))
+                        .payload(b"v")
+                )
+                .is_ok());
+        }
+        drop(p);
+        assert_eq!(DUPLICATE_CONVERSIONS.load(Ordering::SeqCst), 4);
     }
 }

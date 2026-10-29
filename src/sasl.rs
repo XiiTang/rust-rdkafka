@@ -2,8 +2,8 @@
 //! framing, peer success, connection lifetime and retries remain in librdkafka.
 use crate::{bindings as sys, client::ClientContext};
 use std::{
-    ffi::{CStr, c_char, c_int, c_void},
-    panic::{AssertUnwindSafe, catch_unwind},
+    ffi::{c_char, c_int, c_void, CStr},
+    panic::{catch_unwind, AssertUnwindSafe},
 };
 use zeroize::Zeroizing;
 

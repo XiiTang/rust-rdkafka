@@ -477,7 +477,41 @@ fn start_poll_thread(queue: Arc<NativeQueue>, should_stop: Arc<AtomicBool>) -> J
         .expect("Failed to start polling thread")
 }
 
-pub(crate) type NativeEvent = NativePtr<RDKafkaEvent>;
+// The native event frees its messages before the Rust keeps protecting them.
+// All report-loop and BorrowedMessage Arcs share this same owner.
+pub(crate) struct NativeEvent {
+    native: Option<NativePtr<RDKafkaEvent>>,
+    #[cfg(test)]
+    destroyed: Arc<AtomicBool>,
+    keeps: std::sync::Mutex<Vec<Arc<dyn Send + Sync + 'static>>>,
+}
+impl NativeEvent {
+    pub(crate) unsafe fn from_ptr(ptr: *mut RDKafkaEvent) -> Option<Self> {
+        NativePtr::from_ptr(ptr).map(|native| Self {
+            native: Some(native),
+            #[cfg(test)]
+            destroyed: Arc::new(AtomicBool::new(false)),
+            keeps: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+    pub(crate) fn ptr(&self) -> *mut RDKafkaEvent {
+        self.native.as_ref().unwrap().ptr()
+    }
+    #[cfg(test)]
+    pub(crate) fn destruction_probe(&self) -> Arc<AtomicBool> { self.destroyed.clone() }
+    pub(crate) fn keep(&self, keep: Arc<dyn Send + Sync + 'static>) {
+        self.keeps.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(keep);
+    }
+}
+
+impl Drop for NativeEvent {
+    fn drop(&mut self) {
+        // Destroy native messages before Rust keeps, outside the keep lock.
+        drop(self.native.take());
+        #[cfg(test)]
+        self.destroyed.store(true, Ordering::SeqCst);
+    }
+}
 
 unsafe impl KafkaDrop for RDKafkaEvent {
     const TYPE: &'static str = "event";
@@ -487,7 +521,7 @@ unsafe impl KafkaDrop for RDKafkaEvent {
 unsafe impl Send for NativeEvent {}
 unsafe impl Sync for NativeEvent {}
 
-impl NativePtr<RDKafkaEvent> {
+impl NativeEvent {
     fn check_error(&self) -> KafkaResult<()> {
         let err = unsafe { rdsys::rd_kafka_event_error(self.ptr()) };
         if err.is_error() {

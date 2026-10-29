@@ -85,3 +85,25 @@ two items-after-test-module diagnostics in client.rs/config.rs and seven
 large-error closure diagnostics in tests/test_low_producers.rs. The port
 changes neither file; no diagnostic names transport.rs and no lint is
 suppressed. The native librdkafka gitlink remains 0bc88f8e.
+
+## W17d: delivery-event keeps and unread opaque reclamation
+
+Upstream consumes each opaque in its delivery callback while the native event
+still owns the record's copied payload/key/headers. `BorrowedMessage::keep_with_event`
+shares an existing Rust owner with that exact event; native event destruction
+precedes keep release, including callback unwinding. Consumer/admin event ownership
+uses the same backing without changing their behavior. There is no admission,
+extra data copy, callback signature or public event handle.
+
+Upstream BaseProducer Drop purges, flushes for 500 ms and warns on timeout; native
+unread event destruction never calls IntoOpaque::from_ptr. The outstanding
+conversion multiset returns a conversion on delivery/refusal or after client and
+queue destruction. It includes null/equal encodings and opaque types without drop
+glue. No callback/result is synthesized. Existing purge, flush, callback order,
+timeouts, transport and threaded/future producer behavior stay unchanged.
+
+Regression owner: `producer::base_producer::ownership_tests`, including actual
+retained event Arcs for success/error and callback unwind, forced unread reports,
+refused send and conversion multiplicity. The `native-test-adapter` feature exposes
+only a fixture hook after callbacks while the actual report event remains live;
+release users do not enable it. Work-branch verification is recorded after the run.

@@ -253,6 +253,10 @@ pub enum RDKafkaErrorCode {
     InvalidDifferentRecord = -138,
     /// Broker is going away but client isn't terminating */
     DestroyBroker = -137,
+    /// `broker.population.max` reached.
+    BrokerPopulation = -136,
+    /// `partition.population.max` reached.
+    PartitionPopulation = -135,
     #[doc(hidden)]
     End = -100,
     /// Unknown broker error.

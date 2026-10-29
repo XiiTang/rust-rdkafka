@@ -332,6 +332,17 @@ impl fmt::Debug for BorrowedMessage<'_> {
 }
 
 impl<'a> BorrowedMessage<'a> {
+    /// Keeps an existing Rust owner until this native event has destroyed all
+    /// its messages. This shares ownership and requests no resource admission.
+    /// The keep must not refer back to this event (which would create a cycle).
+    /// Delivery callbacks can finish before the report event is destroyed.
+    pub fn keep_with_event(&self, keep: Arc<dyn Send + Sync + 'static>) {
+        self._event.keep(keep);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn event_for_tests(&self) -> Arc<NativeEvent> { self._event.clone() }
+
     /// Native delivery persistence status; local enqueue is not persistence.
     pub fn persistence_status(&self) -> &'static str {
         unsafe {

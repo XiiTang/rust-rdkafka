@@ -176,6 +176,8 @@ pub fn rd_kafka_resp_err_t_to_rdkafka_error(err: RDKafkaRespErr) -> RDKafkaError
         RD_KAFKA_RESP_ERR__LOG_TRUNCATION => LogTruncation,
         RD_KAFKA_RESP_ERR__INVALID_DIFFERENT_RECORD => InvalidDifferentRecord,
         RD_KAFKA_RESP_ERR__DESTROY_BROKER => DestroyBroker,
+        RD_KAFKA_RESP_ERR__BROKER_POPULATION => BrokerPopulation,
+        RD_KAFKA_RESP_ERR__PARTITION_POPULATION => PartitionPopulation,
         RD_KAFKA_RESP_ERR_UNKNOWN_TOPIC_ID => UnknownTopicId,
         RD_KAFKA_RESP_ERR_FENCED_MEMBER_EPOCH => FencedMemberEpoch,
         RD_KAFKA_RESP_ERR_UNRELEASED_INSTANCE_ID => UnreleasedInstanceId,

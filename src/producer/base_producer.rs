@@ -41,6 +41,7 @@
 //! acknowledge messages quickly enough. If this error is returned, the caller
 //! should wait and try again.
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::mem;
@@ -49,7 +50,7 @@ use std::ptr;
 use std::slice;
 use std::str;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -67,7 +68,8 @@ use crate::producer::{
     DefaultProducerContext, Partitioner, Producer, ProducerContext, PurgeConfig,
 };
 use crate::topic_partition_list::TopicPartitionList;
-use crate::util::{Deadline, IntoOpaque, NativePtr, Timeout};
+use crate::util::{Deadline, IntoOpaque, Timeout};
+use crate::admin::NativeEvent;
 
 pub use crate::message::DeliveryResult;
 
@@ -337,6 +339,74 @@ where
     client: Client<C>,
     queue: NativeQueue,
     _partitioner: PhantomData<Part>,
+    // Dropped after `client` and `queue`, once librdkafka is destroyed.
+    outstanding: Outstanding<<C as ProducerContext<Part>>::DeliveryOpaque>,
+    #[cfg(test)]
+    leave_reports_unread: AtomicBool,
+    #[cfg(feature = "native-test-adapter")]
+    event_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+}
+
+/// The delivery opaques librdkafka holds. Each is taken back exactly once: by
+/// its delivery report, by its refused send, or, for one whose report was
+/// never read, when this set is dropped after native destruction, which
+/// destroys unread reports without returning their opaques. Every opaque is
+/// tracked: `IntoOpaque::into_ptr` may allocate whatever the type holds, so a
+/// type without drop glue can still own memory that only `from_ptr` frees.
+struct Outstanding<D: IntoOpaque> {
+    pointers: Mutex<HashMap<usize, usize>>,
+    _opaque: PhantomData<D>,
+}
+
+impl<D: IntoOpaque> Outstanding<D> {
+    fn new() -> Self {
+        Outstanding {
+            pointers: Mutex::new(HashMap::new()),
+            _opaque: PhantomData,
+        }
+    }
+
+    fn pointers(&self) -> MutexGuard<'_, HashMap<usize, usize>> {
+        self.pointers.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Records an opaque about to be handed to librdkafka.
+    fn insert(&self, ptr: *mut c_void) {
+        *self.pointers().entry(ptr as usize).or_default() += 1;
+    }
+
+    /// Takes back an opaque librdkafka returned.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be an opaque recorded by `insert` and returned once.
+    unsafe fn take(&self, ptr: *mut c_void) -> D {
+        {
+            let mut pointers = self.pointers();
+            if let Some(count) = pointers.get_mut(&(ptr as usize)) {
+                *count -= 1;
+                if *count == 0 {
+                    pointers.remove(&(ptr as usize));
+                }
+            }
+        }
+        unsafe { D::from_ptr(ptr) }
+    }
+}
+
+impl<D: IntoOpaque> Drop for Outstanding<D> {
+    fn drop(&mut self) {
+        let pointers = self
+            .pointers
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        for (ptr, count) in pointers.drain() {
+            for _ in 0..count {
+                // SAFETY: librdkafka is destroyed, so no report can return it.
+                drop(unsafe { D::from_ptr(ptr as *mut c_void) });
+            }
+        }
+    }
 }
 
 impl<C, Part> BaseProducer<C, Part>
@@ -351,6 +421,11 @@ where
             client,
             queue,
             _partitioner: PhantomData,
+            outstanding: Outstanding::new(),
+            #[cfg(test)]
+            leave_reports_unread: AtomicBool::new(false),
+            #[cfg(feature = "native-test-adapter")]
+            event_hook: Mutex::new(None),
         }
     }
 
@@ -382,7 +457,9 @@ where
         }
     }
 
-    fn handle_delivery_report_event(&self, event: NativePtr<RDKafkaEvent>) {
+    fn handle_delivery_report_event(&self, event: NativeEvent) {
+        #[cfg(test)]
+        if self.leave_reports_unread.load(Ordering::SeqCst) { return; }
         let max_messages = unsafe { rdsys::rd_kafka_event_message_count(event.ptr()) };
         let messages: Vec<*const RDKafkaMessage> = Vec::with_capacity(max_messages);
 
@@ -400,12 +477,24 @@ where
         for msg in messages {
             let delivery_result =
                 unsafe { BorrowedMessage::from_dr_event(msg as *mut _, ev.clone(), self.client()) };
-            let delivery_opaque = unsafe { C::DeliveryOpaque::from_ptr((*msg)._private) };
+            let delivery_opaque = unsafe { self.outstanding.take((*msg)._private) };
             self.context().delivery(&delivery_result, delivery_opaque);
+        }
+        #[cfg(feature = "native-test-adapter")]
+        {
+            let hook = self.event_hook.lock().unwrap().clone();
+            if let Some(hook) = hook { hook(); }
         }
     }
 
-    fn handle_error_event(&self, event: NativePtr<RDKafkaEvent>) {
+    /// Test fixture hook after delivery callbacks return, while the actual
+    /// delivery event is still alive. Never enabled by release dependencies.
+    #[cfg(feature = "native-test-adapter")]
+    pub fn set_delivery_event_hook_for_tests(&self, hook: Arc<dyn Fn() + Send + Sync>) {
+        *self.event_hook.lock().unwrap() = Some(hook);
+    }
+
+    fn handle_error_event(&self, event: NativeEvent) {
         let rdkafka_err = unsafe { rdsys::rd_kafka_event_error(event.ptr()) };
         let error = KafkaError::Global(rdkafka_err.into());
         let reason = unsafe {
@@ -460,6 +549,7 @@ where
             Err(nul_error) => return Err((nul_error.into(), record)),
         };
         let opaque_ptr = record.delivery_opaque.into_ptr();
+        self.outstanding.insert(opaque_ptr);
         let produce_error = unsafe {
             rdsys::rd_kafka_producev(
                 self.native_ptr(),
@@ -488,7 +578,7 @@ where
             )
         };
         if produce_error.is_error() {
-            record.delivery_opaque = unsafe { C::DeliveryOpaque::from_ptr(opaque_ptr) };
+            record.delivery_opaque = unsafe { self.outstanding.take(opaque_ptr) };
             Err((KafkaError::MessageProduction(produce_error.into()), record))
         } else {
             // The kafka producer now owns the headers
@@ -632,6 +722,8 @@ where
     fn drop(&mut self) {
         self.purge(PurgeConfig::default().queue().inflight());
         // Still have to flush after purging to get the results that have been made ready by the purge
+        // Reports still unread are destroyed with the client; their opaques are
+        // reclaimed when `outstanding` drops after it.
         if let Err(err) = self.flush(Timeout::After(Duration::from_millis(500))) {
             warn!(
                 "Failed to flush outstanding messages while dropping the producer: {:?}",
@@ -811,5 +903,140 @@ where
             };
         }
         trace!("ThreadedProducer destroyed");
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    use crate::{client::ClientContext, mocking::MockCluster};
+    use std::sync::{atomic::AtomicUsize, OnceLock};
+    use std::time::Instant;
+
+    struct Kept {
+        drops: Arc<AtomicUsize>,
+        event_destroyed: OnceLock<Arc<AtomicBool>>,
+    }
+    impl Drop for Kept {
+        fn drop(&mut self) {
+            if let Some(destroyed) = self.event_destroyed.get() {
+                assert!(destroyed.load(Ordering::SeqCst), "native event must be destroyed before its keep");
+            }
+            self.drops.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    #[derive(Clone, Default)]
+    struct Reports {
+        events: Arc<Mutex<Vec<Arc<NativeEvent>>>>,
+        count: Arc<AtomicUsize>,
+        unwind: bool,
+    }
+    impl ClientContext for Reports {}
+    impl ProducerContext for Reports {
+        type DeliveryOpaque = Arc<Kept>;
+        fn delivery(&self, result: &DeliveryResult<'_>, opaque: Self::DeliveryOpaque) {
+            let message = match result { Ok(message) | Err((_, message)) => message };
+            let event = message.event_for_tests();
+            opaque.event_destroyed.set(event.destruction_probe()).unwrap();
+            message.keep_with_event(opaque);
+            self.count.fetch_add(1, Ordering::SeqCst);
+            if self.unwind { panic!("delivery callback unwind"); }
+            self.events.lock().unwrap().push(event);
+        }
+    }
+    fn producer(bootstrap: &str, reports: Reports) -> BaseProducer<Reports> {
+        ClientConfig::new().set("bootstrap.servers", bootstrap)
+            .set("message.max.bytes", "1000").create_with_context(reports).unwrap()
+    }
+    fn send(producer: &BaseProducer<Reports>, drops: &Arc<AtomicUsize>, topic: &str, payload: &[u8]) -> bool {
+        producer.send(BaseRecord::<(), _, _>::with_opaque_to(topic, Arc::new(Kept {
+            drops: drops.clone(), event_destroyed: OnceLock::new(),
+        })).payload(payload)).is_ok()
+    }
+    fn poll_until(producer: &BaseProducer<Reports>, count: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while producer.context().count.load(Ordering::SeqCst) < count {
+            assert!(Instant::now() < deadline, "delivery reports");
+            producer.poll(Duration::from_millis(50));
+        }
+    }
+    #[test]
+    fn event_keeps_outlive_success_error_callbacks_and_actual_native_destruction() {
+        let cluster = MockCluster::new(1).unwrap();
+        cluster.create_topic("keeps", 1, 1).unwrap();
+        for success in [true, false] {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let reports = Reports::default();
+            let p = producer(if success { &cluster.bootstrap_servers() } else { "127.0.0.1:1" }, reports.clone());
+            for _ in 0..3 { assert!(send(&p, &drops, "keeps", b"v")); }
+            if !success { p.purge(PurgeConfig::default().queue().inflight()); }
+            poll_until(&p, 3);
+            assert_eq!(drops.load(Ordering::SeqCst), 0, "callback return must not refund data");
+            if !success {
+                let events = reports.events.lock().unwrap();
+                assert!(events.iter().any(|event| unsafe { rdsys::rd_kafka_event_message_count(event.ptr()) } >= 2), "hold an actual multi-record event");
+            }
+            reports.events.lock().unwrap().clear();
+            assert_eq!(drops.load(Ordering::SeqCst), 3);
+            assert!(!send(&p, &drops, "keeps", &[0; 2000]));
+            assert_eq!(drops.load(Ordering::SeqCst), 4, "refused send returns its original opaque");
+            drop(p);
+            assert_eq!(drops.load(Ordering::SeqCst), 4);
+        }
+    }
+    #[test]
+    fn callback_unwind_keeps_native_destruction_before_refund() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let reports = Reports { unwind: true, ..Reports::default() };
+        let p = producer("127.0.0.1:1", reports);
+        assert!(send(&p, &drops, "unwind", b"v"));
+        p.purge(PurgeConfig::default().queue().inflight());
+        let end = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| poll_until(&p, 1)));
+        assert!(end.is_err());
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
+        drop(p);
+    }
+    #[test]
+    fn unread_report_opaques_are_reclaimed_after_native_destruction() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let reports = Reports::default();
+        let p = producer("127.0.0.1:1", reports.clone());
+        p.leave_reports_unread.store(true, Ordering::SeqCst);
+        for _ in 0..3 { assert!(send(&p, &drops, "unread", b"v")); }
+        drop(p); // Real upstream purge/flush; fixture leaves opaques unconverted.
+        assert_eq!(reports.count.load(Ordering::SeqCst), 0);
+        assert_eq!(drops.load(Ordering::SeqCst), 3);
+    }
+    static CONVERSIONS: AtomicUsize = AtomicUsize::new(0);
+    struct Converted(usize);
+    impl IntoOpaque for Converted {
+        fn into_ptr(self) -> *mut c_void { Box::into_raw(Box::new(self)).cast() }
+        unsafe fn from_ptr(ptr: *mut c_void) -> Self {
+            CONVERSIONS.fetch_add(1, Ordering::SeqCst);
+            *unsafe { Box::from_raw(ptr.cast::<Self>()) }
+        }
+    }
+    struct Converting;
+    impl ClientContext for Converting {}
+    impl ProducerContext for Converting {
+        type DeliveryOpaque = Converted;
+        fn delivery(&self, _: &DeliveryResult<'_>, opaque: Converted) { assert!(opaque.0 < 3); }
+    }
+    #[test]
+    fn unread_opaques_without_drop_glue_and_duplicate_encodings_are_reclaimed() {
+        assert!(!mem::needs_drop::<Converted>());
+        let p: BaseProducer<Converting> = ClientConfig::new().set("bootstrap.servers", "127.0.0.1:1").create_with_context(Converting).unwrap();
+        p.leave_reports_unread.store(true, Ordering::SeqCst);
+        for i in 0..3 { assert!(p.send(BaseRecord::<(), _, _>::with_opaque_to("converted", Converted(i)).payload(b"v")).is_ok()); }
+        drop(p);
+        assert_eq!(CONVERSIONS.load(Ordering::SeqCst), 3);
+        // Unit/usize opaque encodings may repeat, including null. Exercise the
+        // same conversion set, which counts entries rather than unique pointers.
+        let set = Outstanding::<usize>::new();
+        for value in [0, 0, 7, 7] { set.insert(value as *mut c_void); }
+        assert_eq!(unsafe { set.take(ptr::null_mut()) }, 0);
+        assert_eq!(set.pointers().get(&0), Some(&1));
+        assert_eq!(set.pointers().get(&7), Some(&2));
+        drop(set);
     }
 }

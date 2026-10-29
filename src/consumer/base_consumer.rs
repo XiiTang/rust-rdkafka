@@ -211,7 +211,7 @@ where
 
     fn handle_fetch_event(
         &self,
-        event: NativePtr<RDKafkaEvent>,
+        event: NativeEvent,
     ) -> Option<KafkaResult<BorrowedMessage<'_>>> {
         unsafe {
             NativePtr::from_ptr(rdsys::rd_kafka_event_message_next(event.ptr()) as *mut _)
@@ -219,7 +219,7 @@ where
         }
     }
 
-    fn handle_rebalance_event(&self, event: NativePtr<RDKafkaEvent>) {
+    fn handle_rebalance_event(&self, event: NativeEvent) {
         let err = unsafe { rdsys::rd_kafka_event_error(event.ptr()) };
         match err {
             rdsys::rd_kafka_resp_err_t::RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS
@@ -244,7 +244,7 @@ where
         }
     }
 
-    fn handle_offset_commit_event(&self, event: NativePtr<RDKafkaEvent>) {
+    fn handle_offset_commit_event(&self, event: NativeEvent) {
         let err = unsafe { rdsys::rd_kafka_event_error(event.ptr()) };
         let commit_error = if err.is_error() {
             Err(KafkaError::ConsumerCommit(err.into()))
@@ -264,7 +264,7 @@ where
         }
     }
 
-    fn handle_error_event(&self, event: NativePtr<RDKafkaEvent>) -> Option<KafkaError> {
+    fn handle_error_event(&self, event: NativeEvent) -> Option<KafkaError> {
         let rdkafka_err = unsafe { rdsys::rd_kafka_event_error(event.ptr()) };
         if rdkafka_err.is_error() {
             if rdkafka_err == rdsys::rd_kafka_resp_err_t::RD_KAFKA_RESP_ERR__PARTITION_EOF {

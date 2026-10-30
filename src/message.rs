@@ -307,6 +307,11 @@ impl Headers for BorrowedHeaders {
 /// To transform a `BorrowedMessage` into a [`OwnedMessage`], use the
 /// [`detach`](BorrowedMessage::detach) method.
 pub struct BorrowedMessage<'a> {
+    // Test NativePtrs also contain destruction probes. Keep that instrumentation
+    // out of the delivery result's inline message storage.
+    #[cfg(test)]
+    ptr: Box<NativePtr<RDKafkaMessage>>,
+    #[cfg(not(test))]
     ptr: NativePtr<RDKafkaMessage>,
     _event: Arc<NativeEvent>,
     _owner: PhantomData<&'a u8>,
@@ -332,6 +337,17 @@ impl fmt::Debug for BorrowedMessage<'_> {
 }
 
 impl<'a> BorrowedMessage<'a> {
+    fn new(ptr: NativePtr<RDKafkaMessage>, event: Arc<NativeEvent>) -> Self {
+        Self {
+            #[cfg(test)]
+            ptr: Box::new(ptr),
+            #[cfg(not(test))]
+            ptr,
+            _event: event,
+            _owner: PhantomData,
+        }
+    }
+
     /// Keeps an existing Rust owner until this native event has destroyed all
     /// its messages. This shares ownership and requests no resource admission.
     /// The keep must not refer back to this event (which would create a cycle).
@@ -378,11 +394,7 @@ impl<'a> BorrowedMessage<'a> {
             };
             Err(err.with_reply(rdsys::rd_kafka_message_broker_reply(ptr.ptr())))
         } else {
-            Ok(BorrowedMessage {
-                ptr,
-                _event: event,
-                _owner: PhantomData,
-            })
+            Ok(Self::new(ptr, event))
         }
     }
 
@@ -395,11 +407,7 @@ impl<'a> BorrowedMessage<'a> {
         event: Arc<NativeEvent>,
         _client: &'a C,
     ) -> DeliveryResult<'a> {
-        let borrowed_message = BorrowedMessage {
-            ptr: NativePtr::from_ptr(ptr).unwrap(),
-            _event: event,
-            _owner: PhantomData,
-        };
+        let borrowed_message = Self::new(NativePtr::from_ptr(ptr).unwrap(), event);
         if (*ptr).err.is_error() {
             Err((
                 KafkaError::MessageProduction((*ptr).err.into())

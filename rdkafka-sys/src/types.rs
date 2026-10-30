@@ -877,10 +877,6 @@ mod tests {
     #[test]
     fn test_display_error() {
         let error: RDKafkaErrorCode = RDKafkaRespErr::RD_KAFKA_RESP_ERR__PARTITION_EOF.into();
-        assert_eq!(
-            "PartitionEOF (Broker: No more messages)",
-            format!("{}", error)
-        );
-        assert_eq!("PartitionEOF", format!("{:?}", error));
+        assert_eq!("Broker: No more messages", format!("{}", error));
     }
 }

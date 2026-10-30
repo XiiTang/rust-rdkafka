@@ -159,3 +159,13 @@ errors, and transaction/first-fatal facts after native owner destruction. Native
 `0000`/`RD_UT_TEST=failure_rows` additionally exercises callback order and earlier
 EndTxn source selection. Results are recorded with the consumer implementation;
 these focused checks do not claim a complete integration/platform lane.
+
+Focused macOS arm64 validation with Rust 1.97.0: the six `test_failure_rows`
+tests pass, as do the five existing delivery-event/opaque ownership tests,
+fallible topic creation and the updated native Display test. Native `0000`
+with `RD_UT_TEST=failure_rows` passes at `3ba92052`. The test-only message pointer
+boxes the existing destruction-probe backing to keep that instrumentation out
+of the enlarged delivery error's inline storage; production message storage
+and native-first destruction are unchanged. Strict library/tests Clippy still
+reports the pre-existing client/config items-after-test-module warnings and
+seven large-error closures in `test_low_producers`; no lint is suppressed.

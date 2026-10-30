@@ -35,6 +35,7 @@ fn i64v(out: &mut Vec<u8>, v: i64) {
     out.extend_from_slice(&v.to_be_bytes());
 }
 type Handler = dyn Fn(i16, i16, &[u8], &mut Vec<u8>) + Send + Sync;
+type Brokers = Arc<Mutex<Vec<(i32, u16)>>>;
 struct Peer {
     address: String,
     stop: Arc<AtomicBool>,
@@ -46,7 +47,7 @@ impl Peer {
         Self::with_brokers(None, handler)
     }
     fn with_brokers(
-        brokers: Option<Arc<Mutex<Vec<(i32, u16)>>>>,
+        brokers: Option<Brokers>,
         handler: impl Fn(i16, i16, &[u8], &mut Vec<u8>) + Send + Sync + 'static,
     ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -493,7 +494,7 @@ fn kafka_fetch_error_keeps_its_reply() {
         drop(queue);
         drop(consumer);
         let reply = error.broker_reply().unwrap();
-        assert_eq!(reply.code, code);
+        assert_eq!(i32::from(reply.code), code);
         assert_eq!(reply.api_key, 1);
         assert_eq!(
             reply.target,

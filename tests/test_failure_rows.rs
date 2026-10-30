@@ -43,9 +43,16 @@ struct Peer {
 }
 impl Peer {
     fn new(handler: impl Fn(i16, i16, &[u8], &mut Vec<u8>) + Send + Sync + 'static) -> Self {
+        Self::with_brokers(None, handler)
+    }
+    fn with_brokers(
+        brokers: Option<Arc<Mutex<Vec<(i32, u16)>>>>,
+        handler: impl Fn(i16, i16, &[u8], &mut Vec<u8>) + Send + Sync + 'static,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let address = format!("127.0.0.1:{port}");
+        let brokers = brokers.unwrap_or_else(|| Arc::new(Mutex::new(vec![(1, port)])));
         let stop = Arc::new(AtomicBool::new(false));
         let sockets = Arc::new(Mutex::new(Vec::new()));
         let handler: Arc<Handler> = Arc::new(handler);
@@ -61,6 +68,7 @@ impl Peer {
                     let mut socket = incoming.unwrap();
                     sockets.lock().unwrap().push(socket.try_clone().unwrap());
                     let handler = handler.clone();
+                    let brokers = brokers.clone();
                     workers.push(thread::spawn(move || {
                         let mut size = [0; 4];
                         while socket.read_exact(&mut size).is_ok() {
@@ -104,12 +112,17 @@ impl Peer {
                                     }
                                 }
                                 3 => {
-                                    i32v(&mut response, 1);
-                                    i32v(&mut response, 1);
-                                    string(&mut response, "127.0.0.1");
-                                    i32v(&mut response, i32::from(port));
+                                    let brokers = brokers.lock().unwrap();
+                                    i32v(&mut response, brokers.len() as i32);
+                                    for &(id, port) in brokers.iter() {
+                                        i32v(&mut response, id);
+                                        string(&mut response, "127.0.0.1");
+                                        i32v(&mut response, i32::from(port));
+                                        if version >= 1 {
+                                            i16v(&mut response, -1);
+                                        }
+                                    }
                                     if version >= 1 {
-                                        i16v(&mut response, -1);
                                         i32v(&mut response, 1);
                                     }
                                     i32v(&mut response, 1);
@@ -118,8 +131,8 @@ impl Peer {
                                     if version >= 1 {
                                         response.push(0);
                                     }
-                                    i32v(&mut response, 2);
-                                    for partition in 0..2 {
+                                    i32v(&mut response, 3);
+                                    for partition in 0..3 {
                                         i16v(&mut response, 0);
                                         i32v(&mut response, partition);
                                         i32v(&mut response, 1);
@@ -332,6 +345,16 @@ async fn admin_results_keep_resource_errors() {
 
 #[test]
 fn kafka_partial_offsets_survive_native_error() {
+    let local: BaseConsumer = ClientConfig::new().create().unwrap();
+    let mut unanswered = TopicPartitionList::new();
+    unanswered
+        .add_partition_offset("t", 0, Offset::Offset(999999))
+        .unwrap();
+    let absent = local.committed_offsets_with_outcome(unanswered, WAIT);
+    assert!(absent.error.is_some());
+    assert_eq!(absent.partitions.elements()[0].offset(), Offset::Invalid);
+    drop(local);
+
     let peer = Peer::new(|api, _, _, out| match api {
         9 => {
             i32v(out, 1);
@@ -370,7 +393,7 @@ fn kafka_partial_offsets_survive_native_error() {
     let consumer: BaseConsumer = peer.config().create().unwrap();
     consumer.fetch_metadata(None, WAIT).unwrap();
     let mut input = TopicPartitionList::new();
-    for partition in 0..2 {
+    for partition in 0..3 {
         input
             .add_partition_offset("t", partition, Offset::Offset(999999))
             .unwrap();
@@ -401,12 +424,18 @@ fn kafka_partial_offsets_survive_native_error() {
             .code,
         29
     );
-    let commit = consumer.commit_within_outcome(&input, WAIT).unwrap();
+    assert_eq!(committed.partitions.elements()[2].offset(), Offset::Invalid);
+    assert_eq!(offsets.partitions.elements()[2].offset(), Offset::Invalid);
+    let mut committing = TopicPartitionList::new();
+    for partition in 0..2 {
+        committing
+            .add_partition_offset("t", partition, Offset::Offset(1))
+            .unwrap();
+    }
+    let commit = consumer.commit_within_outcome(&committing, WAIT).unwrap();
     assert!(commit.error.is_some());
     assert_eq!(commit.partitions.count(), 2);
-    assert!(commit
-        .partitions
-        .elements()
+    assert!(commit.partitions.elements()[..2]
         .iter()
         .all(|p| p.broker_reply().unwrap().code == 29));
 }
@@ -417,10 +446,12 @@ fn kafka_fetch_error_keeps_its_reply() {
         mocking::MockCluster,
         types::{RDKafkaApiKey, RDKafkaRespErr},
     };
-    for split in [false, true] {
+    for (split, version, code) in [(false, 4, 29), (true, 4, 29), (false, 12, 31)] {
         let cluster = MockCluster::new(1).unwrap();
         cluster.create_topic("t", 1, 1).unwrap();
-        cluster.request_errors(RDKafkaApiKey::Fetch, &[RDKafkaRespErr(29)]);
+        cluster
+            .apiversion(RDKafkaApiKey::Fetch, Some(version), Some(version))
+            .unwrap();
         let consumer: Arc<BaseConsumer> = Arc::new(
             ClientConfig::new()
                 .set("bootstrap.servers", cluster.bootstrap_servers())
@@ -429,12 +460,16 @@ fn kafka_fetch_error_keeps_its_reply() {
                 .create()
                 .unwrap(),
         );
+        consumer.fetch_metadata(None, WAIT).unwrap();
+        cluster.broker_down(1).unwrap();
         let mut parts = TopicPartitionList::new();
         parts
             .add_partition_offset("t", 0, Offset::Offset(0))
             .unwrap();
         consumer.assign(&parts).unwrap();
         let queue = split.then(|| consumer.split_partition_queue("t", 0).unwrap());
+        cluster.request_errors(RDKafkaApiKey::Fetch, &[RDKafkaRespErr(code)]);
+        cluster.broker_up(1).unwrap();
         let deadline = std::time::Instant::now() + WAIT;
         let error = loop {
             assert!(
@@ -458,13 +493,17 @@ fn kafka_fetch_error_keeps_its_reply() {
         drop(queue);
         drop(consumer);
         let reply = error.broker_reply().unwrap();
-        assert_eq!(reply.code, 29);
+        assert_eq!(reply.code, code);
         assert_eq!(reply.api_key, 1);
         assert_eq!(
             reply.target,
-            ReplyTarget::Partition {
-                topic: "t".into(),
-                partition: 0
+            if version >= 7 {
+                ReplyTarget::Request
+            } else {
+                ReplyTarget::Partition {
+                    topic: "t".into(),
+                    partition: 0,
+                }
             }
         );
         assert!(cluster.bootstrap_servers().contains(&reply.peer));
@@ -523,7 +562,12 @@ fn kafka_group_list_exports_completed_groups_only() {
         assert_eq!(groups[0].members()[0].client_id(), "c");
         assert_eq!(
             groups[0].broker().port,
-            peer.address.rsplit(':').next().unwrap().parse().unwrap()
+            peer.address
+                .rsplit(':')
+                .next()
+                .unwrap()
+                .parse::<i32>()
+                .unwrap()
         );
         let error = groups[0].error().unwrap();
         drop(outcome);
@@ -533,5 +577,91 @@ fn kafka_group_list_exports_completed_groups_only() {
             ReplyTarget::Group("complete".into())
         );
         assert_eq!(error.broker_reply().unwrap().code, 29);
+    }
+}
+
+#[test]
+fn reply_facts_outlive_transaction_and_fatal_owners() {
+    use rdkafka::{
+        mocking::MockCluster,
+        producer::{BaseProducer, Producer},
+        types::{RDKafkaApiKey, RDKafkaRespErr},
+    };
+    let cluster = MockCluster::new(1).unwrap();
+    cluster.request_errors(RDKafkaApiKey::InitProducerId, &[RDKafkaRespErr(53)]);
+    let producer: BaseProducer = ClientConfig::new()
+        .set("bootstrap.servers", cluster.bootstrap_servers())
+        .set("transactional.id", "reply-fatal")
+        .create()
+        .unwrap();
+    let transaction = producer.init_transactions(WAIT).unwrap_err();
+    let fatal = producer.client().fatal_error_details().unwrap();
+    let copy = fatal.clone();
+    unsafe {
+        rdkafka::bindings::rd_kafka_test_fatal_error(
+            producer.client().native_ptr(),
+            RDKafkaRespErr(100),
+            c"later native failure".as_ptr(),
+        );
+    }
+    assert_eq!(
+        producer
+            .client()
+            .fatal_error_details()
+            .unwrap()
+            .broker_reply(),
+        copy.broker_reply()
+    );
+    drop(fatal);
+    drop(producer);
+    assert!(copy.is_fatal());
+    assert_eq!(copy.code().raw_code(), 53);
+    assert_eq!(copy.broker_reply().unwrap().api_key, 22);
+    assert_eq!(transaction.broker_reply(), copy.broker_reply());
+    assert_eq!(copy.broker_reply().unwrap().code, 53);
+}
+
+#[test]
+fn kafka_group_list_keeps_each_broker_error() {
+    let brokers = Arc::new(Mutex::new(Vec::new()));
+    let first = Peer::with_brokers(Some(brokers.clone()), |api, _, _, out| {
+        assert_eq!(api, 16);
+        i16v(out, 31);
+        i32v(out, 0);
+    });
+    let second = Peer::with_brokers(Some(brokers.clone()), |api, _, _, out| {
+        assert_eq!(api, 16);
+        i16v(out, 30);
+        i32v(out, 0);
+    });
+    *brokers.lock().unwrap() = vec![
+        (
+            1,
+            first.address.rsplit(':').next().unwrap().parse().unwrap(),
+        ),
+        (
+            2,
+            second.address.rsplit(':').next().unwrap().parse().unwrap(),
+        ),
+    ];
+    let consumer: BaseConsumer = first.config().create().unwrap();
+    consumer.fetch_metadata(None, WAIT).unwrap();
+    let outcome = consumer
+        .client()
+        .fetch_group_list_with_outcome(None, WAIT)
+        .unwrap();
+    assert!(outcome.groups.as_ref().unwrap().groups().is_empty());
+    assert_eq!(outcome.broker_errors.len(), 2);
+    drop(consumer);
+    for (id, code, peer) in [(1, 31, &first.address), (2, 30, &second.address)] {
+        let error = outcome
+            .broker_errors
+            .iter()
+            .find(|error| error.broker_id == id)
+            .unwrap();
+        assert_eq!(&error.peer, peer);
+        assert_eq!(error.api_key, 16);
+        assert_eq!(error.error.broker_reply().unwrap().code, code);
+        assert_eq!(error.error.broker_reply().unwrap().broker_id, id);
     }
 }

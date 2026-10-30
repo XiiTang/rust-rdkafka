@@ -120,3 +120,42 @@ gitlink is a53ce7a0e58af252db00399832c36d9640118eb3, merging the current native
 source. This preserves the transmitted-commit refusal rationale alongside the
 W17d entry. Strict Clippy and the consumer build are recorded separately; no
 full integration/platform lane is claimed.
+
+## W5-D6: open native statuses and owned selected reply facts
+
+Upstream `598ac4ba` rustifies `rd_kafka_resp_err_t` and maps a finite list of
+named codes. Native librdkafka passes through arbitrary signed wire i16 errors;
+an unnamed value such as 30000 is therefore already an invalid Rust enum at the
+FFI boundary. The canonical bindgen command now generates only this enum as a
+transparent integer newtype. Other enums keep their existing representation.
+`RDKafkaErrorCode` retains every named variant and adds `UnknownCode(i32)`;
+`raw_code()` preserves the integer, Display uses native err2str, and `name()`
+exposes the existing native err2name accessor to safe consumers. Unknown's
+existing -1 identity is unchanged. No native behavior or retry policy changes.
+
+The native projection is copied into owned `BrokerReply`/`ReplyTarget` facts
+before its owner dies. `KafkaError::BrokerReply` preserves the original error,
+and complex errors expose their optional reply. Both borrowed-message and
+consumer event error routes use the native getter. Native fallback diagnostics,
+flags and status remain independent of wire code/explanation. Peer text uses
+its decoded byte length, including embedded NUL, without trimming or fallback.
+
+Admin errors retain their resource keys and complex native errors; config errors
+are checked before presenting entries as success. Inherent richer partition,
+commit and group APIs retain completed results and the independent overall error.
+The old Consumer trait signatures share the same implementation. Group broker
+errors are a per-call collection, and fatal details copy the existing first-fatal
+owner. No client-wide last-error cache, retry, alternate sender or completion
+event is added. The native gitlink includes the corresponding W5-D6 custody
+patch, preserving W17b transport, W17d populations/opaque ownership and the prior
+transmitted-commit policy.
+
+Regression: `tests/test_failure_rows.rs` uses real scripted Kafka frames and the
+native mock broker. It covers unnamed status 30000 before conversion, reordered
+keyed admin results, native-normalized wire 7, exact and absent explanations,
+failed configs, DeleteRecords fanout custody, partial/unanswered offsets, both
+Fetch error routes and request scope, complete partial groups, multiple broker
+errors, and transaction/first-fatal facts after native owner destruction. Native
+`0000`/`RD_UT_TEST=failure_rows` additionally exercises callback order and earlier
+EndTxn source selection. Results are recorded with the consumer implementation;
+these focused checks do not claim a complete integration/platform lane.

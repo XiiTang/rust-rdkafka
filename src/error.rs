@@ -47,7 +47,7 @@ impl IsError for RDKafkaError {
 #[derive(Clone)]
 pub struct RDKafkaError(
     Option<Arc<NativePtr<rdsys::rd_kafka_error_t>>>,
-    Option<BrokerReply>,
+    Option<Arc<BrokerReply>>,
 );
 
 unsafe impl KafkaDrop for rdsys::rd_kafka_error_t {
@@ -60,13 +60,13 @@ unsafe impl Sync for RDKafkaError {}
 
 impl RDKafkaError {
     pub(crate) unsafe fn from_ptr(ptr: *mut rdsys::rd_kafka_error_t) -> RDKafkaError {
-        let reply = BrokerReply::from_ptr(rdsys::rd_kafka_error_broker_reply(ptr));
+        let reply = BrokerReply::from_ptr(rdsys::rd_kafka_error_broker_reply(ptr)).map(Arc::new);
         RDKafkaError(NativePtr::from_ptr(ptr).map(Arc::new), reply)
     }
 
     /// Returns this result's original decoded broker reply, if any.
     pub fn broker_reply(&self) -> Option<&BrokerReply> {
-        self.1.as_ref()
+        self.1.as_deref()
     }
 
     pub(crate) unsafe fn from_result(
@@ -81,7 +81,7 @@ impl RDKafkaError {
         };
         let ptr = rdsys::rd_kafka_error_new(code, b"%s\0".as_ptr().cast(), message);
         let mut error = Self::from_ptr(ptr);
-        error.1 = BrokerReply::from_ptr(reply);
+        error.1 = BrokerReply::from_ptr(reply).map(Arc::new);
         error
     }
 

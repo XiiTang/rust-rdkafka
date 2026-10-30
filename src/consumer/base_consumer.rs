@@ -36,8 +36,50 @@ pub struct PartitionOutcome {
     /// Overall native completion error, if any.
     pub error: Option<KafkaError>,
 }
-/// The result of a bounded commit after it was admitted.
+/// Per-partition and overall commit status. `PendingCommit` returns only actual native completion.
 pub type CommitOutcome = PartitionOutcome;
+
+/// One admitted commit's private reply queue and its consumer.
+///
+/// An empty poll is not completion. Dropping this owner releases observation,
+/// not the native request: the commit can still take effect afterward.
+pub struct PendingCommit<C: ConsumerContext = DefaultConsumerContext> {
+    // Destroy the queue before the client it belongs to.
+    queue: Option<NativeQueue>,
+    _consumer: Arc<BaseConsumer<C>>,
+}
+
+impl<C: ConsumerContext> PendingCommit<C> {
+    /// Waits for the actual native completion, retaining ownership on an empty
+    /// poll. Once an outcome has been returned, subsequent polls return `None`.
+    /// This never submits another commit.
+    pub fn poll<T: Into<Timeout>>(&mut self, timeout: T) -> Option<CommitOutcome> {
+        let event = unsafe { NativeEvent::from_ptr(self.queue.as_ref()?.poll(timeout)) }?;
+        let outcome = commit_outcome(event);
+        self.queue.take();
+        Some(outcome)
+    }
+}
+
+fn commit_outcome(event: NativeEvent) -> CommitOutcome {
+    assert_eq!(
+        unsafe { rdsys::rd_kafka_event_type(event.ptr()) },
+        rdsys::RD_KAFKA_EVENT_OFFSET_COMMIT,
+        "a private commit queue contains only OffsetCommit completion"
+    );
+    let status = unsafe { rdsys::rd_kafka_event_error(event.ptr()) };
+    let parts = unsafe { rdsys::rd_kafka_event_topic_partition_list(event.ptr()) };
+    let partitions = if parts.is_null() {
+        TopicPartitionList::new()
+    } else {
+        unsafe { TopicPartitionList::from_ptr(rdsys::rd_kafka_topic_partition_list_copy(parts)) }
+    };
+    let error = status.is_error().then(|| unsafe {
+        KafkaError::ConsumerCommit(status.into())
+            .with_reply(rdsys::rd_kafka_event_broker_reply(event.ptr()))
+    });
+    PartitionOutcome { partitions, error }
+}
 
 /// Native seek evidence. An overall timeout does not discard completed partitions.
 #[derive(Debug)]
@@ -79,7 +121,38 @@ impl<C> BaseConsumer<C>
 where
     C: ConsumerContext,
 {
-    /// Commits within the existing timeout, retaining per-partition completion.
+    /// Admits one commit and retains its completion queue and consumer.
+    ///
+    /// The input is copied by librdkafka during this call. Poll the returned
+    /// owner to receive the actual overall and per-partition outcome. Dropping
+    /// it does not cancel the commit or prove that it did not take effect.
+    pub fn start_commit(
+        self: &Arc<Self>,
+        offsets: &TopicPartitionList,
+    ) -> KafkaResult<PendingCommit<C>> {
+        let queue = self.client.new_native_queue();
+        let admission = unsafe {
+            rdsys::rd_kafka_commit_queue(
+                self.client.native_ptr(),
+                offsets.ptr(),
+                queue.ptr(),
+                None,
+                ptr::null_mut(),
+            )
+        };
+        if admission.is_error() {
+            return Err(KafkaError::ConsumerCommit(admission.into()));
+        }
+        Ok(PendingCommit {
+            queue: Some(queue),
+            _consumer: self.clone(),
+        })
+    }
+
+    /// Bounds observation of a commit, retaining per-partition completion if
+    /// available. An empty poll returns a local timeout and discards this
+    /// observation queue; it does not cancel the native request. Use
+    /// [`BaseConsumer::start_commit`] to retain its eventual completion.
     pub fn commit_within_outcome<T: Into<Timeout>>(
         &self,
         offsets: &TopicPartitionList,
@@ -105,24 +178,7 @@ where
                     RDKafkaErrorCode::OperationTimedOut,
                 )),
             }),
-            Some(event) => {
-                let status = unsafe { rdsys::rd_kafka_event_error(event.ptr()) };
-                let parts = unsafe { rdsys::rd_kafka_event_topic_partition_list(event.ptr()) };
-                let partitions = if parts.is_null() {
-                    TopicPartitionList::new()
-                } else {
-                    unsafe {
-                        TopicPartitionList::from_ptr(rdsys::rd_kafka_topic_partition_list_copy(
-                            parts,
-                        ))
-                    }
-                };
-                let error = status.is_error().then(|| unsafe {
-                    KafkaError::ConsumerCommit(status.into())
-                        .with_reply(rdsys::rd_kafka_event_broker_reply(event.ptr()))
-                });
-                Ok(PartitionOutcome { partitions, error })
-            }
+            Some(event) => Ok(commit_outcome(event)),
         }
     }
     /// Fetches committed offsets without discarding partial native results.
@@ -1012,5 +1068,93 @@ where
 {
     fn drop(&mut self) {
         unsafe { rdsys::rd_kafka_queue_cb_event_enable(self.queue.ptr(), None, ptr::null_mut()) }
+    }
+}
+
+#[cfg(test)]
+mod pending_commit_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    };
+
+    struct Context {
+        queue: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    }
+    impl crate::client::ClientContext for Context {}
+    impl ConsumerContext for Context {}
+    impl Drop for Context {
+        fn drop(&mut self) {
+            assert!(
+                self.queue
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .load(Ordering::Acquire),
+                "private commit queue is destroyed before its consumer"
+            );
+        }
+    }
+
+    #[test]
+    fn an_already_queued_commit_pins_its_client_and_destroys_its_queue_first() {
+        let cluster = crate::mocking::MockCluster::new(1).unwrap();
+        cluster.create_topic("t", 1, 1).unwrap();
+        let queue = Arc::new(Mutex::new(None));
+        let consumer: Arc<BaseConsumer<Context>> = Arc::new(
+            ClientConfig::new()
+                .set("bootstrap.servers", cluster.bootstrap_servers())
+                .set("group.id", "pending-owner")
+                .set("enable.auto.commit", "false")
+                .create_with_context(Context {
+                    queue: queue.clone(),
+                })
+                .unwrap(),
+        );
+        let destroyed = consumer.client.native_client().destruction_probe();
+        let mut offsets = TopicPartitionList::new();
+        offsets
+            .add_partition_offset("t", 0, Offset::Offset(41))
+            .unwrap();
+        let mut pending = consumer.start_commit(&offsets).unwrap();
+        let private = pending.queue.as_ref().unwrap();
+        let queue_destroyed = private.destruction_probe();
+        *queue.lock().unwrap() = Some(queue_destroyed.clone());
+        drop(consumer);
+        assert!(!destroyed.load(Ordering::Acquire));
+        // Observe the actual queue state before the first poll, not an assumed
+        // elapsed interval. Native mock I/O runs independently of this thread.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while unsafe { rdsys::rd_kafka_queue_length(private.ptr()) } == 0 {
+            assert!(Instant::now() < deadline, "native commit did not complete");
+            std::thread::yield_now();
+        }
+        let outcome = pending.poll(Duration::ZERO).unwrap();
+        assert!(outcome.error.is_none());
+        assert_eq!(
+            outcome.partitions.elements()[0].offset(),
+            Offset::Offset(41)
+        );
+        assert!(queue_destroyed.load(Ordering::Acquire));
+        assert!(!destroyed.load(Ordering::Acquire));
+        assert!(pending.poll(Duration::ZERO).is_none());
+        drop(pending);
+        assert!(destroyed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn start_commit_returns_native_admission_refusal_without_a_group() {
+        let consumer: Arc<BaseConsumer> = Arc::new(ClientConfig::new().create().unwrap());
+        let mut offsets = TopicPartitionList::new();
+        offsets
+            .add_partition_offset("t", 0, Offset::Offset(1))
+            .unwrap();
+        let error = consumer.start_commit(&offsets).err().unwrap();
+        assert_eq!(
+            error.rdkafka_error_code(),
+            Some(RDKafkaErrorCode::UnknownGroup)
+        );
     }
 }

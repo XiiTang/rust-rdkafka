@@ -207,3 +207,44 @@ strict library/tests Clippy reports exactly the same nine baseline diagnostics
 (two client/config module-order warnings and seven large-error producer-test
 closures), with no suppression or unrelated repair. Consumer publication and
 Produce v9 effect results are recorded with the Boundless review correction.
+
+## W3-D6: retained manual commit completion
+
+Upstream rust-rdkafka `598ac4ba` exposes synchronous/asynchronous commit but no
+owned per-call completion queue. The current Boundless convenience method
+`commit_within_outcome` submits with the existing public C
+`rd_kafka_commit_queue`, then destroys its private queue after an empty bounded
+poll. librdkafka may still hold that same deferred commit, so the eventual
+completion is lost. The native library already provides the required queue
+ownership; no native behavior, retry policy or gitlink changes are needed.
+
+`BaseConsumer::start_commit` on Arc admits once and returns `PendingCommit`
+keeping its private queue and consumer. Empty polls retain that owner; an actual
+event is extracted once using the same owned W5-D6 extraction as the legacy
+bounded method. The queue is destroyed before its pinned consumer. Drop releases
+observation and does not cancel the native request. Legacy bounded methods keep
+their explicit discarding behavior. Native codes and selected broker replies
+retain their existing extraction and ownership.
+
+Regression coverage: `consumer::base_consumer::pending_commit_tests` drives a
+real mock-broker answer already queued before the first poll, no-group native
+admission refusal, an external consumer Arc dropped while pending, and the
+existing native destruction probes for queue-before-client release.
+`tests/test_failure_rows.rs::pending_commit_keeps_empty_polls_and_its_actual_keyed_answer`
+uses the existing scripted broker and production decoder: repeated empty polls
+retain the queue, reversed keys preserve unnamed and named statuses plus the
+independent overall result, source event destruction precedes inspection, and
+exhausted polling never submits again. A mixed wire result retains both original
+keys and native propagated status 30000, independently of each selected peer projection. No synthetic event setter,
+new native API, callback mailbox, retry or client-wide error cache is added.
+
+Focused macOS arm64 validation with the consumer's Rust 1.97.0 and features
+`cmake-build,tokio,ssl-vendored,libz-static,zstd`: the two new ownership/admission
+unit tests and all seven `test_failure_rows` tests pass (exit 0). The initial
+expectations for success provenance and propagated native overall status were
+corrected to the existing W5-D6 decoder contract. Strict library/tests Clippy
+exits 101 at the unchanged input-pin baseline: two items-after-test-module
+errors in client.rs/config.rs and seven large-error closure errors in
+tests/test_low_producers.rs. None names this patch, and no lint is suppressed.
+Final consumer validation is recorded with the implementation; no full platform
+or landing verdict is claimed here.

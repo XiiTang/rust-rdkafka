@@ -345,6 +345,136 @@ async fn admin_results_keep_resource_errors() {
 }
 
 #[test]
+fn pending_commit_keeps_empty_polls_and_its_actual_keyed_answer() {
+    let (received, requests) = std::sync::mpsc::channel();
+    let release = Arc::new((Mutex::new(0usize), std::sync::Condvar::new()));
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let peer = Peer::new({
+        let release = release.clone();
+        let count = count.clone();
+        move |api, _, _, out| {
+            assert_eq!(api, 8);
+            let request = count.fetch_add(1, Ordering::SeqCst) + 1;
+            received.send(request).unwrap();
+            let (lock, wake) = &*release;
+            let _released = wake
+                .wait_while(lock.lock().unwrap(), |n| *n < request)
+                .unwrap();
+            i32v(out, 1);
+            string(out, "t");
+            i32v(out, 2);
+            // Reverse the requested order. The last failed partition determines
+            // the independent overall native status when all entries failed.
+            for (partition, code) in [(1, 30000), (0, 29)] {
+                i32v(out, partition);
+                i16v(
+                    out,
+                    match request {
+                        1 => code,
+                        3 if partition == 1 => 30000,
+                        _ => 0,
+                    },
+                );
+            }
+        }
+    });
+    let consumer: Arc<BaseConsumer> = Arc::new(peer.config().create().unwrap());
+    let weak = Arc::downgrade(&consumer);
+    consumer.fetch_metadata(None, WAIT).unwrap();
+    let mut input = TopicPartitionList::new();
+    for partition in 0..2 {
+        input
+            .add_partition_offset("t", partition, Offset::Offset(41 + i64::from(partition)))
+            .unwrap();
+    }
+    for request in 1..=2 {
+        let mut pending = consumer.start_commit(&input).unwrap();
+        assert!(pending.poll(Duration::ZERO).is_none());
+        assert_eq!(requests.recv_timeout(WAIT).unwrap(), request);
+        assert!(pending.poll(Duration::ZERO).is_none());
+        *release.0.lock().unwrap() = request;
+        release.1.notify_all();
+        let answer = pending
+            .poll(WAIT)
+            .expect("the held native response completed");
+        // poll has destroyed the source NativeEvent before these inspections.
+        assert_eq!(answer.partitions.count(), 2);
+        if request == 1 {
+            assert_eq!(
+                answer.error.as_ref().unwrap().rdkafka_error_code(),
+                Some(RDKafkaErrorCode::TopicAuthorizationFailed)
+            );
+        } else {
+            assert!(answer.error.is_none());
+        }
+        for part in answer.partitions.elements() {
+            let code = if request == 2 {
+                0
+            } else if part.partition() == 1 {
+                30000
+            } else {
+                29
+            };
+            assert_eq!(part.topic(), "t");
+            assert_eq!(
+                part.offset(),
+                Offset::Offset(41 + i64::from(part.partition()))
+            );
+            if code != 0 {
+                assert_eq!(part.broker_reply().unwrap().code, code);
+            }
+            assert_eq!(
+                part.error()
+                    .err()
+                    .and_then(|error| error.rdkafka_error_code())
+                    .map(|code| code.raw_code())
+                    .unwrap_or(0),
+                i32::from(code)
+            );
+        }
+        assert!(pending.poll(Duration::ZERO).is_none());
+        assert_eq!(count.load(Ordering::SeqCst), request);
+    }
+    let pending = consumer.start_commit(&input).unwrap();
+    assert_eq!(requests.recv_timeout(WAIT).unwrap(), 3);
+    drop(consumer);
+    assert!(weak.upgrade().is_some(), "pending pins its consumer");
+    *release.0.lock().unwrap() = 3;
+    release.1.notify_all();
+    let mut pending = pending;
+    let partial = pending.poll(WAIT).unwrap();
+    assert_eq!(
+        partial.error.as_ref().unwrap().rdkafka_error_code(),
+        Some(RDKafkaErrorCode::UnknownCode(30000))
+    );
+    // librdkafka propagates a nonzero overall error to entries with no
+    // explicit error; retain that native status without inventing wire success.
+    assert_eq!(
+        partial
+            .partitions
+            .find_partition("t", 0)
+            .unwrap()
+            .error()
+            .unwrap_err()
+            .rdkafka_error_code(),
+        Some(RDKafkaErrorCode::UnknownCode(30000))
+    );
+    assert_eq!(
+        partial
+            .partitions
+            .find_partition("t", 1)
+            .unwrap()
+            .broker_reply()
+            .unwrap()
+            .code,
+        30000
+    );
+    drop(pending);
+    assert!(weak.upgrade().is_none());
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+}
+
+#[test]
 fn kafka_partial_offsets_survive_native_error() {
     let local: BaseConsumer = ClientConfig::new().create().unwrap();
     let mut unanswered = TopicPartitionList::new();

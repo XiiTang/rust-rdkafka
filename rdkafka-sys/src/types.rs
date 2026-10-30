@@ -878,5 +878,11 @@ mod tests {
     fn test_display_error() {
         let error: RDKafkaErrorCode = RDKafkaRespErr::RD_KAFKA_RESP_ERR__PARTITION_EOF.into();
         assert_eq!("Broker: No more messages", format!("{}", error));
+        for raw in [i32::MAX, i32::MIN] {
+            let error = RDKafkaErrorCode::UnknownCode(raw);
+            assert_eq!(error.raw_code(), raw);
+            assert_eq!(error.name(), format!("ERR_{raw}?"));
+            assert_eq!(error.to_string(), format!("Err-{raw}?"));
+        }
     }
 }

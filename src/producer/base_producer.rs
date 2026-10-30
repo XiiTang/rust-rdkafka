@@ -441,7 +441,8 @@ where
                 let evtype = unsafe { rdsys::rd_kafka_event_type(ev.ptr()) };
                 match evtype {
                     rdsys::RD_KAFKA_EVENT_DR => self.handle_delivery_report_event(ev),
-                    rdsys::RD_KAFKA_EVENT_ERROR => self.handle_error_event(ev),
+                    // Client::poll_event already converted and forwarded this event.
+                    rdsys::RD_KAFKA_EVENT_ERROR => {}
                     _ => {
                         let evname = unsafe {
                             let evname = rdsys::rd_kafka_event_name(ev.ptr());
@@ -496,15 +497,6 @@ where
     #[cfg(feature = "native-test-adapter")]
     pub fn set_delivery_event_hook_for_tests(&self, hook: Arc<dyn Fn() + Send + Sync>) {
         *self.event_hook.lock().unwrap() = Some(hook);
-    }
-
-    fn handle_error_event(&self, event: NativeEvent) {
-        let rdkafka_err = unsafe { rdsys::rd_kafka_event_error(event.ptr()) };
-        let error = KafkaError::Global(rdkafka_err.into());
-        let reason = unsafe {
-            CStr::from_ptr(rdsys::rd_kafka_event_error_string(event.ptr())).to_string_lossy()
-        };
-        self.context().error(error, reason.trim());
     }
 
     /// Returns a pointer to the native Kafka client.

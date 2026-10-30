@@ -169,3 +169,41 @@ of the enlarged delivery error's inline storage; production message storage
 and native-first destruction are unchanged. Strict library/tests Clippy still
 reports the pre-existing client/config items-after-test-module warnings and
 seven large-error closures in `test_low_producers`; no lint is suppressed.
+
+
+### W5-D6 review correction: one conversion per native error event
+
+Upstream master `4566e560` still forwards RD_KAFKA_EVENT_ERROR twice for a
+BaseProducer: Client::poll_event calls the common handle_error_event and returns
+the event, then BaseProducer::poll forwards it through a second handler. The
+second handler also loses the selected reply. The producer now drops the already
+forwarded error event rather than invoking the callback again; the common
+conversion remains the only producer callback entry. Delivery reporting and
+consumer callback/poll APIs are unchanged. No deduplication cache or new owner is
+introduced.
+
+The consumer adapter selects returned main/split poll errors as its publication
+path and suppresses its own publication from the public ClientContext callback.
+Its existing installed-consumer slot distinguishes that path from producer/admin
+callback-only publication. Both returned routes use the same conversion, including
+canonical fatal handling and exact reply custody.
+
+Regression entry points are the consumer's existing real authentication refusal
+and Fetch fixtures. They join producers before counting publications; Fetch
+covers main and split queues while reserving all but one observation slot, so
+redundant forwarding cannot hide as a first-match receive or false overflow.
+The existing native Display test also exercises UnknownCode(i32::MAX/MIN) through
+both native name and Display, with the native range-arithmetic repair in the
+submodule. Focused and sanitizer results are recorded after those checks.
+
+
+Review-correction validation on macOS arm64/Rust 1.97.0: all six existing
+`test_failure_rows` tests and all six selected native-event ownership/topic
+creation tests pass. The existing sys Display test passes both i32 extremes
+through native name and Display under UBSan, with recovery disabled and the
+Apple Clang runtime explicitly linked. Native source is `44fcd0e7` (its final
+change only records validation). Strict library Clippy passes for rdkafka/sys;
+strict library/tests Clippy reports exactly the same nine baseline diagnostics
+(two client/config module-order warnings and seven large-error producer-test
+closures), with no suppression or unrelated repair. Consumer publication and
+Produce v9 effect results are recorded with the Boundless review correction.

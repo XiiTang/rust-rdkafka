@@ -319,3 +319,15 @@ returned as a retriable transactional error (see the librdkafka fork's
 unchanged. Boundless's effect check (`commit_transaction` answering a
 retriable NOT_COORDINATOR, then completing on the program's repeat) is
 recorded in the consumer.
+
+## Boundless #440 and #442: admin offset reply identity and complete codec decoding
+
+The native gitlink moves to `fedec4614edde9a0c66498b5e5e772af4bcb97eb`, which carries
+librdkafka's Boundless #440, a W5-D6 correction (the AlterConsumerGroupOffsets
+and ListConsumerGroupOffsets results take a broker reply's API identity from
+the parsed response instead of a NULL request, which faulted), and #442: a
+Fetch batch's gzip payload is decoded through every member and its LZ4 frame
+to its end, and anything else fails the batch with `_BAD_COMPRESSION` (see the
+librdkafka fork's `PATCHES.md`). No public C API changes, so bindings and Rust
+sources are unchanged. Boundless's effect check drives crafted gzip and LZ4
+batches through the Fetch reader and is recorded in the consumer.

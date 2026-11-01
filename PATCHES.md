@@ -307,3 +307,15 @@ errors in client.rs/config.rs and seven large-error closure errors in
 tests/test_low_producers.rs. None names this patch, and no lint is suppressed.
 Final consumer validation is recorded with the implementation; no full platform
 or landing verdict is claimed here.
+
+## Boundless #308 and #309: native transactional resend rule
+
+The native gitlink moves to `753d47e3e575175c94d95817d7e625acdae35194`, which carries librdkafka's
+Boundless #309 (0143 fixture, test only) and #308: a failed AddOffsetsToTxn,
+TxnOffsetCommit or EndTxn attempt is sent again only when it was never
+transmitted or the coordinator refused it before acting; any other failure is
+returned as a retriable transactional error (see the librdkafka fork's
+`PATCHES.md`). No public C API changes, so bindings and Rust sources are
+unchanged. Boundless's effect check (`commit_transaction` answering a
+retriable NOT_COORDINATOR, then completing on the program's repeat) is
+recorded in the consumer.

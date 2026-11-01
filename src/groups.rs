@@ -13,6 +13,21 @@ use crate::util::{KafkaDrop, NativePtr};
 pub struct GroupMemberInfo(RDKafkaGroupMemberInfo);
 
 impl GroupMemberInfo {
+    /// Returns `client_host` without panicking on invalid UTF-8 from the broker.
+    pub fn try_client_host(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.client_host).to_str() }
+    }
+
+    /// Returns `client_id` without panicking on invalid UTF-8 from the broker.
+    pub fn try_client_id(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.client_id).to_str() }
+    }
+
+    /// Returns `id` without panicking on invalid UTF-8 from the broker.
+    pub fn try_id(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.member_id).to_str() }
+    }
+
     /// Returns the ID of the member.
     pub fn id(&self) -> &str {
         unsafe {
@@ -84,6 +99,37 @@ pub struct Broker {
 pub struct GroupInfo(RDKafkaGroupInfo);
 
 impl GroupInfo {
+    /// Returns the answering broker, refusing an invalid UTF-8 host.
+    pub fn try_broker(&self) -> Result<Broker, std::str::Utf8Error> {
+        Ok(Broker {
+            id: self.0.broker.id,
+            port: self.0.broker.port,
+            host: unsafe { CStr::from_ptr(self.0.broker.host) }
+                .to_str()?
+                .to_owned(),
+        })
+    }
+
+    /// Returns `protocol_type` without panicking on invalid UTF-8 from the broker.
+    pub fn try_protocol_type(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.protocol_type).to_str() }
+    }
+
+    /// Returns `protocol` without panicking on invalid UTF-8 from the broker.
+    pub fn try_protocol(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.protocol).to_str() }
+    }
+
+    /// Returns `state` without panicking on invalid UTF-8 from the broker.
+    pub fn try_state(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.state).to_str() }
+    }
+
+    /// Returns `name` without panicking on invalid UTF-8 from the broker.
+    pub fn try_name(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.group).to_str() }
+    }
+
     /// Returns the group's actual native error independently of provenance.
     pub fn error(&self) -> Option<crate::error::KafkaError> {
         use crate::error::IsError;
@@ -103,8 +149,8 @@ impl GroupInfo {
                 .to_owned(),
         }
     }
-    /// Returns only this group's own decoded broker result.
-    pub fn broker_reply(&self) -> Option<crate::error::BrokerReply> {
+    /// Returns this group's decoded result, or refuses its invalid UTF-8 fields.
+    pub fn broker_reply(&self) -> crate::error::KafkaResult<Option<crate::error::BrokerReply>> {
         unsafe {
             crate::error::BrokerReply::from_ptr(rdkafka_sys::rd_kafka_group_info_broker_reply(
                 &self.0,
@@ -193,6 +239,43 @@ impl GroupList {
     pub fn groups(&self) -> &[GroupInfo] {
         unsafe {
             slice::from_raw_parts(self.0.groups as *const GroupInfo, self.0.group_cnt as usize)
+        }
+    }
+}
+
+#[cfg(test)]
+mod response_text_tests {
+    use super::*;
+    #[test]
+    fn group_and_member_text_are_fallible() {
+        for bytes in [b"valid\0".as_slice(), b"\0", b"\xff\0", b"a\0b\0"] {
+            let text = CStr::from_bytes_until_nul(bytes).unwrap();
+            let expected = text.to_str();
+            let mut group: RDKafkaGroupInfo = unsafe { std::mem::zeroed() };
+            group.group = text.as_ptr() as *mut _;
+            group.state = text.as_ptr() as *mut _;
+            group.protocol = text.as_ptr() as *mut _;
+            group.protocol_type = text.as_ptr() as *mut _;
+            group.broker.host = text.as_ptr() as *mut _;
+            group.broker.id = 7;
+            group.broker.port = 9092;
+            let group = GroupInfo(group);
+            assert_eq!(group.try_name(), expected);
+            assert_eq!(group.try_state(), expected);
+            assert_eq!(group.try_protocol(), expected);
+            assert_eq!(group.try_protocol_type(), expected);
+            assert_eq!(
+                group.try_broker().map(|b| (b.id, b.host, b.port)),
+                expected.map(|s| (7, s.to_owned(), 9092))
+            );
+            let mut member: RDKafkaGroupMemberInfo = unsafe { std::mem::zeroed() };
+            member.member_id = text.as_ptr() as *mut _;
+            member.client_id = text.as_ptr() as *mut _;
+            member.client_host = text.as_ptr() as *mut _;
+            let member = GroupMemberInfo(member);
+            assert_eq!(member.try_id(), expected);
+            assert_eq!(member.try_client_id(), expected);
+            assert_eq!(member.try_client_host(), expected);
         }
     }
 }

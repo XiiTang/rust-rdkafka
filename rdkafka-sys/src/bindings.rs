@@ -698,6 +698,16 @@ extern "C" {
         sizep: *mut usize,
     ) -> rd_kafka_resp_err_t;
 }
+extern "C" {
+    pub fn rd_kafka_header_get_all_with_name_size(
+        hdrs: *const rd_kafka_headers_t,
+        idx: usize,
+        namep: *mut *const c_char,
+        name_sizep: *mut usize,
+        valuep: *mut *const c_void,
+        sizep: *mut usize,
+    ) -> rd_kafka_resp_err_t;
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct rd_kafka_message_s {

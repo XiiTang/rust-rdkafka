@@ -47,7 +47,7 @@ impl IsError for RDKafkaError {
 #[derive(Clone)]
 pub struct RDKafkaError(
     Option<Arc<NativePtr<rdsys::rd_kafka_error_t>>>,
-    Option<Arc<BrokerReply>>,
+    Result<Option<Arc<BrokerReply>>, Box<KafkaError>>,
 );
 
 unsafe impl KafkaDrop for rdsys::rd_kafka_error_t {
@@ -60,13 +60,18 @@ unsafe impl Sync for RDKafkaError {}
 
 impl RDKafkaError {
     pub(crate) unsafe fn from_ptr(ptr: *mut rdsys::rd_kafka_error_t) -> RDKafkaError {
-        let reply = BrokerReply::from_ptr(rdsys::rd_kafka_error_broker_reply(ptr)).map(Arc::new);
+        let reply = BrokerReply::from_ptr(rdsys::rd_kafka_error_broker_reply(ptr))
+            .map(|reply| reply.map(Arc::new))
+            .map_err(Box::new);
         RDKafkaError(NativePtr::from_ptr(ptr).map(Arc::new), reply)
     }
 
-    /// Returns this result's original decoded broker reply, if any.
-    pub fn broker_reply(&self) -> Option<&BrokerReply> {
-        self.1.as_deref()
+    /// Returns this result's decoded reply, or its retained malformed-field refusal.
+    pub fn broker_reply(&self) -> KafkaResult<Option<&BrokerReply>> {
+        match &self.1 {
+            Ok(reply) => Ok(reply.as_deref()),
+            Err(error) => Err((**error).clone()),
+        }
     }
 
     pub(crate) unsafe fn from_result(
@@ -81,7 +86,9 @@ impl RDKafkaError {
         };
         let ptr = rdsys::rd_kafka_error_new(code, b"%s\0".as_ptr().cast(), message);
         let mut error = Self::from_ptr(ptr);
-        error.1 = BrokerReply::from_ptr(reply).map(Arc::new);
+        error.1 = BrokerReply::from_ptr(reply)
+            .map(|reply| reply.map(Arc::new))
+            .map_err(Box::new);
         error
     }
 
@@ -150,7 +157,14 @@ impl fmt::Display for RDKafkaError {
     }
 }
 
-impl Error for RDKafkaError {}
+impl Error for RDKafkaError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.1
+            .as_ref()
+            .err()
+            .map(|error| &**error as &(dyn Error + 'static))
+    }
+}
 
 // TODO: consider using macro
 
@@ -202,17 +216,24 @@ pub enum ReplyTarget {
     },
 }
 impl BrokerReply {
-    pub(crate) unsafe fn from_ptr(ptr: *const rdsys::rd_kafka_broker_reply_t) -> Option<Self> {
+    pub(crate) unsafe fn from_ptr(
+        ptr: *const rdsys::rd_kafka_broker_reply_t,
+    ) -> KafkaResult<Option<Self>> {
         use rdsys::rd_kafka_reply_target_t::*;
-        let reply = ptr.as_ref()?;
-        let text = |ptr: *const libc::c_char, len: usize| {
-            if len == 0 {
-                return String::new();
-            }
-            String::from_utf8(std::slice::from_raw_parts(ptr.cast(), len).to_vec())
-                .expect("librdkafka supplies UTF-8 Kafka response text")
+        let Some(reply) = ptr.as_ref() else {
+            return Ok(None);
         };
-        let name = text(reply.name, reply.name_size);
+        let text = |ptr: *const libc::c_char, len: usize, part| {
+            let bytes = if len == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(ptr.cast(), len)
+            };
+            std::str::from_utf8(bytes)
+                .map(str::to_owned)
+                .map_err(|_| KafkaError::InvalidResponse { part, error: None })
+        };
+        let name = text(reply.name, reply.name_size, "reply.name")?;
         let target = match reply.target {
             RD_KAFKA_REPLY_REQUEST => ReplyTarget::Request,
             RD_KAFKA_REPLY_TOPIC => ReplyTarget::Topic(name),
@@ -227,19 +248,29 @@ impl BrokerReply {
             },
             RD_KAFKA_REPLY_AUTHENTICATION => ReplyTarget::Authentication { mechanism: name },
         };
-        Some(Self {
+        Ok(Some(Self {
             api_key: reply.api_key,
             api_version: reply.api_version,
             broker_id: reply.broker_id,
             peer: CStr::from_ptr(reply.peer)
                 .to_str()
-                .expect("librdkafka supplies a UTF-8 broker authority")
+                .map_err(|_| KafkaError::InvalidResponse {
+                    part: "reply.peer",
+                    error: None,
+                })?
                 .to_owned(),
             target,
             code: reply.code,
-            explanation: (reply.explanation_size > 0)
-                .then(|| text(reply.explanation, reply.explanation_size)),
-        })
+            explanation: if reply.explanation_size > 0 {
+                Some(text(
+                    reply.explanation,
+                    reply.explanation_size,
+                    "reply.explanation",
+                )?)
+            } else {
+                None
+            },
+        }))
     }
 }
 
@@ -249,6 +280,13 @@ impl BrokerReply {
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum KafkaError {
+    /// A selected broker response contains invalid UTF-8 in a named field.
+    InvalidResponse {
+        /// The malformed response field, without its raw contents.
+        part: &'static str,
+        /// The original native error, when this refusal wraps one.
+        error: Option<Box<KafkaError>>,
+    },
     /// Native classification with its own original decoded broker reply.
     BrokerReply {
         /// Native classification and diagnostics.
@@ -313,6 +351,9 @@ pub enum KafkaError {
 impl fmt::Debug for KafkaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            KafkaError::InvalidResponse { part, .. } => {
+                write!(f, "KafkaError (Malformed response field: {part})")
+            }
             KafkaError::BrokerReply { error, .. } => fmt::Debug::fmt(error, f),
             KafkaError::AdminOp(err) => write!(f, "KafkaError (Admin operation error: {})", err),
             KafkaError::AdminOpCreation(err) => {
@@ -377,6 +418,9 @@ impl fmt::Debug for KafkaError {
 impl fmt::Display for KafkaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            KafkaError::InvalidResponse { part, .. } => {
+                write!(f, "Malformed response field: {part}")
+            }
             KafkaError::BrokerReply { error, .. } => fmt::Display::fmt(error, f),
             KafkaError::AdminOp(err) => write!(f, "Admin operation error: {}", err),
             KafkaError::AdminOpCreation(err) => {
@@ -419,6 +463,9 @@ impl fmt::Display for KafkaError {
 impl Error for KafkaError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            KafkaError::InvalidResponse { error, .. } => error
+                .as_deref()
+                .map(|error| error as &(dyn Error + 'static)),
             KafkaError::BrokerReply { error, .. } => error.source(),
             KafkaError::AdminOp(_) => None,
             KafkaError::AdminOpCreation(_) => None,
@@ -461,6 +508,9 @@ impl KafkaError {
     #[allow(clippy::match_same_arms)]
     pub fn rdkafka_error_code(&self) -> Option<RDKafkaErrorCode> {
         match self {
+            KafkaError::InvalidResponse { error, .. } => {
+                error.as_deref().and_then(Self::rdkafka_error_code)
+            }
             KafkaError::BrokerReply { error, .. } => error.rdkafka_error_code(),
             KafkaError::AdminOp(err) => Some(*err),
             KafkaError::AdminOpCreation(_) => None,
@@ -493,30 +543,131 @@ impl KafkaError {
 }
 
 impl KafkaError {
-    /// Returns only the reply selected for this native result.
-    pub fn broker_reply(&self) -> Option<&BrokerReply> {
+    /// Returns the selected reply, distinguishing absence from malformed text.
+    pub fn broker_reply(&self) -> KafkaResult<Option<&BrokerReply>> {
         match self {
-            Self::BrokerReply { reply, .. } => Some(reply),
+            Self::InvalidResponse { .. } => Err(self.clone()),
+            Self::BrokerReply { reply, .. } => Ok(Some(reply)),
             Self::Transaction(error) => error.broker_reply(),
-            _ => None,
+            _ => Ok(None),
+        }
+    }
+    fn with_projection_refusal(self, error: Self) -> Self {
+        match error {
+            Self::InvalidResponse { part, .. } => Self::InvalidResponse {
+                part,
+                error: Some(Box::new(self)),
+            },
+            _ => unreachable!("BrokerReply decoding returns only InvalidResponse"),
         }
     }
     pub(crate) fn with_native_error(self, native: &RDKafkaError) -> Self {
         match native.broker_reply() {
-            Some(reply) => Self::BrokerReply {
+            Ok(Some(reply)) => Self::BrokerReply {
                 error: Box::new(self),
                 reply: reply.clone(),
             },
-            None => self,
+            Ok(None) => self,
+            Err(error) => self.with_projection_refusal(error),
         }
     }
     pub(crate) unsafe fn with_reply(self, reply: *const rdsys::rd_kafka_broker_reply_t) -> Self {
         match BrokerReply::from_ptr(reply) {
-            Some(reply) => Self::BrokerReply {
+            Ok(Some(reply)) => Self::BrokerReply {
                 error: Box::new(self),
                 reply,
             },
-            None => self,
+            Ok(None) => self,
+            Err(error) => self.with_projection_refusal(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod response_text_tests {
+    use super::*;
+    fn reply(name: &[u8], explanation: &[u8], peer: &CStr) -> rdsys::rd_kafka_broker_reply_t {
+        let mut raw: rdsys::rd_kafka_broker_reply_t = unsafe { std::mem::zeroed() };
+        raw.target = rdsys::rd_kafka_reply_target_t::RD_KAFKA_REPLY_PARTITION;
+        raw.api_key = 0;
+        raw.api_version = 8;
+        raw.broker_id = 7;
+        raw.peer = peer.as_ptr();
+        raw.name = name.as_ptr().cast();
+        raw.name_size = name.len();
+        raw.partition = 0;
+        raw.code = 29;
+        raw.explanation = explanation.as_ptr().cast();
+        raw.explanation_size = explanation.len();
+        raw
+    }
+    fn part(error: &KafkaError) -> &'static str {
+        match error {
+            KafkaError::InvalidResponse { part, .. } => part,
+            _ => panic!("{error:?}"),
+        }
+    }
+    #[test]
+    fn selected_reply_text_is_fallible_and_keeps_native_ownership() {
+        assert!(unsafe { BrokerReply::from_ptr(ptr::null()) }
+            .unwrap()
+            .is_none());
+        let peer = std::ffi::CString::new("broker:9092").unwrap();
+        let name = b"t\0inside".to_vec();
+        let explanation = b" \0 reason \n".to_vec();
+        let valid = reply(&name, &explanation, &peer);
+        let decoded = unsafe { BrokerReply::from_ptr(&valid) }.unwrap().unwrap();
+        assert_eq!(
+            decoded.target,
+            ReplyTarget::Partition {
+                topic: "t\0inside".into(),
+                partition: 0
+            }
+        );
+        assert_eq!(decoded.explanation.as_deref(), Some(" \0 reason \n"));
+        for field in ["reply.name", "reply.explanation", "reply.peer"] {
+            let bad_peer = std::ffi::CString::new(vec![255]).unwrap();
+            let malformed = match field {
+                "reply.name" => reply(&[255], &explanation, &peer),
+                "reply.explanation" => reply(&name, &[255], &peer),
+                _ => reply(&name, &explanation, &bad_peer),
+            };
+            let error = unsafe { BrokerReply::from_ptr(&malformed) }.unwrap_err();
+            assert_eq!(part(&error), field);
+            assert_eq!(error.rdkafka_error_code(), None);
+            assert!(error.broker_reply().is_err());
+            assert!(format!("{error:?}").contains(field));
+            assert!(!format!("{error}").contains('\u{fffd}'));
+            let original =
+                KafkaError::MessageProduction(RDKafkaErrorCode::TopicAuthorizationFailed);
+            let old = unsafe { original.clone().with_reply(&valid) };
+            let carried = unsafe { old.with_reply(&malformed) };
+            assert_eq!(part(&carried), field);
+            assert!(carried.broker_reply().is_err());
+            assert!(carried.source().is_some());
+            assert_eq!(carried.rdkafka_error_code(), original.rdkafka_error_code());
+            let native = unsafe {
+                RDKafkaError::from_result(
+                    RDKafkaRespErr::RD_KAFKA_RESP_ERR_TOPIC_AUTHORIZATION_FAILED,
+                    b"native diagnostic\0".as_ptr().cast(),
+                    &malformed,
+                )
+            };
+            let copy = native.clone();
+            drop(native);
+            let wrapped = original.clone().with_native_error(&copy);
+            assert_eq!(part(&wrapped), field);
+            assert_eq!(wrapped.rdkafka_error_code(), original.rdkafka_error_code());
+            assert!(copy.broker_reply().is_err());
+            let transaction = KafkaError::Transaction(copy);
+            assert_eq!(part(&transaction.broker_reply().unwrap_err()), field);
+            assert_eq!(
+                transaction.rdkafka_error_code(),
+                original.rdkafka_error_code()
+            );
+        }
+        drop((name, explanation, peer));
+        assert_eq!(decoded.peer, "broker:9092");
+        assert_eq!(decoded.explanation.as_deref(), Some(" \0 reason \n"));
     }
 }

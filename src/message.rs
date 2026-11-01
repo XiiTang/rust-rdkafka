@@ -234,6 +234,36 @@ pub trait Message {
 pub struct BorrowedHeaders;
 
 impl BorrowedHeaders {
+    /// Borrows a complete header name as bytes and its optional value.
+    /// Embedded NUL and invalid UTF-8 are preserved. A null value differs from
+    /// a present empty value; an absent index returns `None`.
+    pub fn try_get_bytes(&self, idx: usize) -> Option<(&[u8], Option<&[u8]>)> {
+        let mut name = ptr::null();
+        let mut name_size = 0;
+        let mut value = ptr::null();
+        let mut value_size = 0;
+        let error = unsafe {
+            rdsys::rd_kafka_header_get_all_with_name_size(
+                self.as_native_ptr(),
+                idx,
+                &mut name,
+                &mut name_size,
+                &mut value,
+                &mut value_size,
+            )
+        };
+        if error.is_error() {
+            None
+        } else {
+            unsafe {
+                Some((
+                    util::ptr_to_slice(name.cast(), name_size),
+                    (!value.is_null()).then(|| util::ptr_to_slice(value, value_size)),
+                ))
+            }
+        }
+    }
+
     unsafe fn from_native_ptr<T>(
         _owner: &T,
         headers_ptr: *mut rdsys::rd_kafka_headers_t,
@@ -914,5 +944,38 @@ mod test {
                 value: Some("value2")
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod response_text_tests {
+    use super::*;
+    #[test]
+    fn raw_header_names_keep_their_complete_octets() {
+        let cases: &[(&[u8], Option<&[u8]>)] = &[
+            (&[255], None),
+            (b"a\0b", Some(b"")),
+            (b"", Some(&[0, 255])),
+            (&[255], Some(b"last")),
+        ];
+        let owned = OwnedHeaders::new_with_capacity(cases.len());
+        for (name, value) in cases {
+            let result = unsafe {
+                rdsys::rd_kafka_header_add(
+                    owned.as_borrowed().as_native_ptr() as *mut _,
+                    name.as_ptr().cast(),
+                    name.len() as _,
+                    value.map_or(ptr::null(), |v| v.as_ptr().cast()),
+                    value.map_or(0, |v| v.len()) as _,
+                )
+            };
+            assert!(!result.is_error());
+        }
+        let headers = owned.as_borrowed();
+        for (index, expected) in cases.iter().enumerate() {
+            assert_eq!(headers.try_get_bytes(index), Some(*expected));
+        }
+        assert_eq!(headers.try_get_bytes(cases.len()), None);
+        assert_eq!(headers.try_get_bytes(usize::MAX), None);
     }
 }

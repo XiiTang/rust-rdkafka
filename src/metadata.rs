@@ -14,6 +14,11 @@ use crate::util::{KafkaDrop, NativePtr};
 pub struct MetadataBroker(RDKafkaMetadataBroker);
 
 impl MetadataBroker {
+    /// Returns `host` without panicking on invalid UTF-8 from the broker.
+    pub fn try_host(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.host).to_str() }
+    }
+
     /// Returns the id of the broker.
     pub fn id(&self) -> i32 {
         self.0.id
@@ -99,6 +104,11 @@ impl fmt::Debug for MetadataPartition {
 pub struct MetadataTopic(RDKafkaMetadataTopic);
 
 impl MetadataTopic {
+    /// Returns `name` without panicking on invalid UTF-8 from the broker.
+    pub fn try_name(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.topic).to_str() }
+    }
+
     /// Returns the name of the topic.
     pub fn name(&self) -> &str {
         unsafe {
@@ -157,6 +167,11 @@ unsafe extern "C" fn drop_metadata(ptr: *mut RDKafkaMetadata) {
 }
 
 impl Metadata {
+    /// Returns `orig_broker_name` without panicking on invalid UTF-8 from the broker.
+    pub fn try_orig_broker_name(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.0.orig_broker_name).to_str() }
+    }
+
     /// Creates a new Metadata container given a pointer to the native rdkafka-sys metadata.
     pub(crate) unsafe fn from_ptr(ptr: *const RDKafkaMetadata) -> Metadata {
         Metadata(NativePtr::from_ptr(ptr as *mut _).unwrap())
@@ -186,13 +201,16 @@ impl Metadata {
         }
     }
 
-    /// Returns the decoded result for a request, topic or partition.
+    /// Returns the decoded result for a request, topic or partition, refusing invalid UTF-8.
     pub fn broker_reply(
         &self,
         topic: Option<&str>,
         partition: i32,
-    ) -> Option<crate::error::BrokerReply> {
-        let topic = topic.map(std::ffi::CString::new).transpose().ok()?;
+    ) -> crate::error::KafkaResult<Option<crate::error::BrokerReply>> {
+        let topic = match topic.map(std::ffi::CString::new).transpose() {
+            Ok(topic) => topic,
+            Err(_) => return Ok(None), // Preserve the existing lookup convention for NUL.
+        };
         unsafe {
             crate::error::BrokerReply::from_ptr(rdsys::rd_kafka_metadata_broker_reply(
                 self.0.ptr(),
@@ -226,3 +244,26 @@ impl fmt::Debug for Metadata {
 
 unsafe impl Send for Metadata {}
 unsafe impl Sync for Metadata {}
+
+#[cfg(test)]
+mod response_text_tests {
+    use super::*;
+    #[test]
+    fn broker_topic_and_origin_text_are_fallible() {
+        for bytes in [b"valid\0".as_slice(), b"\0", b"\xff\0", b"a\0b\0"] {
+            let text = CStr::from_bytes_until_nul(bytes).unwrap();
+            let expected = text.to_str();
+            let mut broker: RDKafkaMetadataBroker = unsafe { std::mem::zeroed() };
+            broker.host = text.as_ptr() as *mut _;
+            assert_eq!(MetadataBroker(broker).try_host(), expected);
+            let mut topic: RDKafkaMetadataTopic = unsafe { std::mem::zeroed() };
+            topic.topic = text.as_ptr() as *mut _;
+            assert_eq!(MetadataTopic(topic).try_name(), expected);
+            let mut metadata: RDKafkaMetadata = unsafe { std::mem::zeroed() };
+            metadata.orig_broker_name = text.as_ptr() as *mut _;
+            // This borrowed test struct is Rust-owned, not allocated by the C API.
+            let metadata = std::mem::ManuallyDrop::new(unsafe { Metadata::from_ptr(&metadata) });
+            assert_eq!(metadata.try_orig_broker_name(), expected);
+        }
+    }
+}

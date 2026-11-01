@@ -262,7 +262,7 @@ async fn admin_results_keep_resource_errors() {
     for results in [&created, &deleted, &expanded] {
         for result in results {
             let error = result.as_ref().unwrap_err();
-            let reply = error.error.broker_reply().unwrap();
+            let reply = error.error.broker_reply().unwrap().unwrap();
             assert_eq!(reply.target, ReplyTarget::Topic(error.resource.clone()));
             assert_eq!(reply.peer, peer.address);
             assert_eq!(reply.code, if error.resource == "one" { 7 } else { 30000 });
@@ -302,7 +302,7 @@ async fn admin_results_keep_resource_errors() {
     for result in &described {
         let error = result.as_ref().unwrap_err();
         assert!(error.resource.entries.is_empty());
-        assert_eq!(error.error.broker_reply().unwrap().code, 29);
+        assert_eq!(error.error.broker_reply().unwrap().unwrap().code, 29);
     }
     for result in &altered {
         assert_eq!(result.as_ref().unwrap_err().error.code().raw_code(), 29);
@@ -316,7 +316,7 @@ async fn admin_results_keep_resource_errors() {
         .unwrap_err();
     assert_eq!(group.resource, "g");
     assert_eq!(
-        group.error.broker_reply().unwrap().target,
+        group.error.broker_reply().unwrap().unwrap().target,
         ReplyTarget::Group("g".into())
     );
     let mut parts = TopicPartitionList::new();
@@ -327,7 +327,7 @@ async fn admin_results_keep_resource_errors() {
     let copy = records.clone();
     drop(records);
     drop(admin);
-    assert_eq!(copy.elements()[0].broker_reply().unwrap().code, 29);
+    assert_eq!(copy.elements()[0].broker_reply().unwrap().unwrap().code, 29);
     // All owned reply strings remain valid after NativeEvent/result destruction.
     assert_eq!(
         created[1].as_ref().unwrap_err().error.code(),
@@ -421,7 +421,7 @@ fn pending_commit_keeps_empty_polls_and_its_actual_keyed_answer() {
                 Offset::Offset(41 + i64::from(part.partition()))
             );
             if code != 0 {
-                assert_eq!(part.broker_reply().unwrap().code, code);
+                assert_eq!(part.broker_reply().unwrap().unwrap().code, code);
             }
             assert_eq!(
                 part.error()
@@ -465,6 +465,7 @@ fn pending_commit_keeps_empty_polls_and_its_actual_keyed_answer() {
             .find_partition("t", 1)
             .unwrap()
             .broker_reply()
+            .unwrap()
             .unwrap()
             .code,
         30000
@@ -539,6 +540,7 @@ fn kafka_partial_offsets_survive_native_error() {
         committed.partitions.elements()[1]
             .broker_reply()
             .unwrap()
+            .unwrap()
             .code,
         29
     );
@@ -551,6 +553,7 @@ fn kafka_partial_offsets_survive_native_error() {
     assert_eq!(
         offsets.partitions.elements()[1]
             .broker_reply()
+            .unwrap()
             .unwrap()
             .code,
         29
@@ -566,9 +569,12 @@ fn kafka_partial_offsets_survive_native_error() {
     let commit = consumer.commit_within_outcome(&committing, WAIT).unwrap();
     assert!(commit.error.is_some());
     assert_eq!(commit.partitions.count(), 2);
-    assert!(commit.partitions.elements()[..2]
-        .iter()
-        .all(|p| p.broker_reply().unwrap().code == 29));
+    assert!(commit.partitions.elements()[..2].iter().all(|p| p
+        .broker_reply()
+        .unwrap()
+        .unwrap()
+        .code
+        == 29));
 }
 
 #[test]
@@ -616,14 +622,14 @@ fn kafka_fetch_error_keeps_its_reply() {
                 }
             };
             if let Some(Err(error)) = event {
-                if error.broker_reply().is_some() {
+                if error.broker_reply().unwrap().is_some() {
                     break error;
                 }
             }
         };
         drop(queue);
         drop(consumer);
-        let reply = error.broker_reply().unwrap();
+        let reply = error.broker_reply().unwrap().unwrap();
         assert_eq!(i32::from(reply.code), code);
         assert_eq!(reply.api_key, 1);
         assert_eq!(
@@ -704,10 +710,10 @@ fn kafka_group_list_exports_completed_groups_only() {
         drop(outcome);
         drop(consumer);
         assert_eq!(
-            error.broker_reply().unwrap().target,
+            error.broker_reply().unwrap().unwrap().target,
             ReplyTarget::Group("complete".into())
         );
-        assert_eq!(error.broker_reply().unwrap().code, 29);
+        assert_eq!(error.broker_reply().unwrap().unwrap().code, 29);
     }
 }
 
@@ -740,16 +746,20 @@ fn reply_facts_outlive_transaction_and_fatal_owners() {
             .client()
             .fatal_error_details()
             .unwrap()
-            .broker_reply(),
-        copy.broker_reply()
+            .broker_reply()
+            .unwrap(),
+        copy.broker_reply().unwrap()
     );
     drop(fatal);
     drop(producer);
     assert!(copy.is_fatal());
     assert_eq!(copy.code().raw_code(), 53);
-    assert_eq!(copy.broker_reply().unwrap().api_key, 22);
-    assert_eq!(transaction.broker_reply(), copy.broker_reply());
-    assert_eq!(copy.broker_reply().unwrap().code, 53);
+    assert_eq!(copy.broker_reply().unwrap().unwrap().api_key, 22);
+    assert_eq!(
+        transaction.broker_reply().unwrap(),
+        copy.broker_reply().unwrap()
+    );
+    assert_eq!(copy.broker_reply().unwrap().unwrap().code, 53);
 }
 
 #[test]
@@ -792,7 +802,7 @@ fn kafka_group_list_keeps_each_broker_error() {
             .unwrap();
         assert_eq!(&error.peer, peer);
         assert_eq!(error.api_key, 16);
-        assert_eq!(error.error.broker_reply().unwrap().code, code);
-        assert_eq!(error.error.broker_reply().unwrap().broker_id, id);
+        assert_eq!(error.error.broker_reply().unwrap().unwrap().code, code);
+        assert_eq!(error.error.broker_reply().unwrap().unwrap().broker_id, id);
     }
 }

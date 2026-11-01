@@ -57,6 +57,49 @@ pub struct GroupListOutcome {
     pub error: Option<KafkaError>,
 }
 
+// The native array stays owned through every conversion and early return.
+unsafe fn broker_request_errors(
+    ptr: *mut rdsys::rd_kafka_group_list_broker_error_t,
+    count: usize,
+) -> KafkaResult<Vec<BrokerRequestError>> {
+    struct Errors(*mut rdsys::rd_kafka_group_list_broker_error_t, usize);
+    impl Drop for Errors {
+        fn drop(&mut self) {
+            unsafe { rdsys::rd_kafka_group_list_broker_errors_destroy(self.0, self.1) }
+        }
+    }
+    let errors = Errors(ptr, count);
+    (0..count)
+        .map(|i| broker_request_error(&*errors.0.add(i)))
+        .collect()
+}
+
+/// Copies one native group-request error before its array owner is released.
+fn broker_request_error(
+    item: &rdsys::rd_kafka_group_list_broker_error_t,
+) -> KafkaResult<BrokerRequestError> {
+    let code = unsafe { rdsys::rd_kafka_error_code(item.error) };
+    let error = unsafe {
+        KafkaError::GroupListFetch(code.into())
+            .with_reply(rdsys::rd_kafka_error_broker_reply(item.error))
+    };
+    let _ = error.broker_reply()?;
+    let peer = unsafe { CStr::from_ptr(item.peer) }
+        .to_str()
+        .map_err(|_| KafkaError::InvalidResponse {
+            part: "broker_errors[].peer",
+            error: Some(Box::new(error.clone())),
+        })?
+        .to_owned();
+    Ok(BrokerRequestError {
+        broker_id: item.broker_id,
+        peer,
+        api_key: item.api_key,
+        api_version: (item.api_version >= 0).then_some(item.api_version),
+        error,
+    })
+}
+
 /// Client-level context.
 ///
 /// Each client (consumers and producers included) has a context object that can
@@ -539,6 +582,7 @@ impl<C: ClientContext> Client<C> {
     }
 
     /// Fetches group data and failed broker subrequests independently.
+    /// Invalid UTF-8 in a selected reply or subrequest peer refuses the whole call.
     pub fn fetch_group_list_with_outcome<T: Into<Timeout>>(
         &self,
         group: Option<&str>,
@@ -562,38 +606,17 @@ impl<C: ClientContext> Client<C> {
         };
         let native_error = unsafe { RDKafkaError::from_ptr(error) };
         let groups = (!groups.is_null()).then(|| unsafe { GroupList::from_ptr(groups) });
-        struct Errors(*mut rdsys::rd_kafka_group_list_broker_error_t, usize);
-        impl Drop for Errors {
-            fn drop(&mut self) {
-                unsafe { rdsys::rd_kafka_group_list_broker_errors_destroy(self.0, self.1) }
-            }
-        }
-        let errors = Errors(broker_errors, count);
-        let mut broker_errors = Vec::with_capacity(count);
-        for i in 0..count {
-            let item = unsafe { &*errors.0.add(i) };
-            let code = unsafe { rdsys::rd_kafka_error_code(item.error) };
-            let error = unsafe {
-                KafkaError::GroupListFetch(code.into())
-                    .with_reply(rdsys::rd_kafka_error_broker_reply(item.error))
-            };
-            broker_errors.push(BrokerRequestError {
-                broker_id: item.broker_id,
-                peer: unsafe { CStr::from_ptr(item.peer) }
-                    .to_str()
-                    .expect("native broker authority is UTF-8")
-                    .to_owned(),
-                api_key: item.api_key,
-                api_version: (item.api_version >= 0).then_some(item.api_version),
-                error,
-            });
+        let broker_errors = unsafe { broker_request_errors(broker_errors, count) }?;
+        let error = status
+            .is_error()
+            .then(|| KafkaError::GroupListFetch(status.into()).with_native_error(&native_error));
+        if let Some(error) = &error {
+            let _ = error.broker_reply()?;
         }
         Ok(GroupListOutcome {
             groups,
             broker_errors,
-            error: status.is_error().then(|| {
-                KafkaError::GroupListFetch(status.into()).with_native_error(&native_error)
-            }),
+            error,
         })
     }
 
@@ -743,6 +766,58 @@ impl Drop for NativeClient {
                 );
             } else {
                 ManuallyDrop::drop(&mut self.ptr);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod response_text_tests {
+    use super::*;
+    #[test]
+    fn group_request_peer_refusal_keeps_its_error_after_native_array_release() {
+        for peer in [b"broker:9092\0".as_slice(), b"\0", b"\xff\0"] {
+            let peer = CStr::from_bytes_with_nul(peer).unwrap();
+            let rows = unsafe {
+                let rows = libc::calloc(
+                    1,
+                    std::mem::size_of::<rdsys::rd_kafka_group_list_broker_error_t>(),
+                ) as *mut rdsys::rd_kafka_group_list_broker_error_t;
+                assert!(!rows.is_null());
+                (*rows).broker_id = 7;
+                (*rows).api_key = 16;
+                (*rows).api_version = 0;
+                (*rows).peer = libc::strdup(peer.as_ptr());
+                (*rows).error = rdsys::rd_kafka_error_new(
+                    RDKafkaRespErr::RD_KAFKA_RESP_ERR_GROUP_AUTHORIZATION_FAILED,
+                    b"%s\0".as_ptr().cast(),
+                    b"native diagnostic\0".as_ptr().cast::<libc::c_char>(),
+                );
+                rows
+            };
+            let result = unsafe { broker_request_errors(rows, 1) };
+            if let Ok(peer) = peer.to_str() {
+                let row = result.unwrap().pop().unwrap();
+                assert_eq!(row.peer, peer);
+                assert_eq!(row.broker_id, 7);
+                assert_eq!(
+                    row.error.rdkafka_error_code(),
+                    Some(RDKafkaErrorCode::GroupAuthorizationFailed)
+                );
+            } else {
+                let error = result.unwrap_err();
+                assert!(matches!(
+                    error,
+                    KafkaError::InvalidResponse {
+                        part: "broker_errors[].peer",
+                        ..
+                    }
+                ));
+                assert_eq!(
+                    error.rdkafka_error_code(),
+                    Some(RDKafkaErrorCode::GroupAuthorizationFailed)
+                );
+                assert!(error.broker_reply().is_err());
             }
         }
     }

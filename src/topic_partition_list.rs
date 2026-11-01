@@ -85,6 +85,11 @@ pub struct TopicPartitionListElem<'a> {
 }
 
 impl<'a> TopicPartitionListElem<'a> {
+    /// Returns the topic name without panicking on invalid UTF-8 from the broker.
+    pub fn try_topic(&self) -> Result<&str, std::str::Utf8Error> {
+        unsafe { CStr::from_ptr(self.ptr.topic).to_str() }
+    }
+
     // _owner_list serves as a marker so that the lifetime isn't too long
     fn from_ptr(
         _owner_list: &'a TopicPartitionList,
@@ -103,9 +108,8 @@ impl<'a> TopicPartitionListElem<'a> {
         }
     }
 
-    /// Returns the optional error associated to the specific entry in the TPL.
-    /// The original decoded result for this partition, if one was received.
-    pub fn broker_reply(&self) -> Option<crate::error::BrokerReply> {
+    /// Returns this partition's selected broker reply, refusing invalid UTF-8.
+    pub fn broker_reply(&self) -> crate::error::KafkaResult<Option<crate::error::BrokerReply>> {
         unsafe {
             crate::error::BrokerReply::from_ptr(rdsys::rd_kafka_topic_partition_broker_reply(
                 self.ptr,
@@ -632,5 +636,21 @@ mod tests {
             tpl.find_partition("t2", 0).unwrap().offset(),
             Offset::Stored
         );
+    }
+}
+
+#[cfg(test)]
+mod response_text_tests {
+    use super::*;
+    #[test]
+    fn native_partition_topics_are_fallible() {
+        for bytes in [b"valid\0".as_slice(), b"\0", b"\xff\0", b"a\0b\0"] {
+            let text = CStr::from_bytes_until_nul(bytes).unwrap();
+            let list = TopicPartitionList::new();
+            unsafe {
+                rdsys::rd_kafka_topic_partition_list_add(list.ptr(), text.as_ptr(), 0);
+            }
+            assert_eq!(list.elements()[0].try_topic(), text.to_str());
+        }
     }
 }

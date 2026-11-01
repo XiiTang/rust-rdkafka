@@ -208,6 +208,65 @@ strict library/tests Clippy reports exactly the same nine baseline diagnostics
 closures), with no suppression or unrelated repair. Consumer publication and
 Produce v9 effect results are recorded with the Boundless review correction.
 
+### Boundless #179: fallible selected reply and group-peer text
+
+This corrects our own W5-D6 additions (`255fe5f6` and `52c952ac`), not
+upstream: `BrokerReply::from_ptr` and the group-list peer extractor used
+UTF-8 `expect`s. The selected reply decoder now returns `KafkaResult<Option<_>>`:
+null is absence; invalid name, explanation or peer is `InvalidResponse` with
+its static field name. Length-bearing text preserves valid NUL and whitespace.
+The public reply getters are fallible. Native constructors retain refusal
+separately from absence; `with_reply` and `with_native_error` carry the original
+error/code beneath it and never fall back to an older projection. Display/Debug
+name the field without raw data; source/code access preserves the original error.
+
+The group-list outcome refuses the whole call for an invalid peer or selected
+projection, with its existing native array/list/error owners released on early
+return. The delivery path keeps upstream's original `Err((error, message))`,
+native event, opaque reclamation and once-only callback. No new callback,
+client-wide error cache, retry, codec, cancellation or close policy is added.
+
+Regressions: `response_text_tests::selected_reply_text_is_fallible_and_keeps_native_ownership`
+(`error.rs`), `response_text_tests::group_request_peer_refusal_keeps_its_error_after_native_array_release`
+(`client.rs`), and the existing real-frame `test_failure_rows` suite. On macOS
+arm64/Rust 1.97.0, at base `6f4a6110` plus the #179 changes, all six new
+`response_text_tests`, all seven `test_failure_rows` tests and all five
+`producer::base_producer::ownership_tests` passed (exit 0), using
+`cmake-build,tokio,ssl-vendored,libz-static,zstd`. Strict library/tests Clippy
+exited 101 on unchanged `config.rs` module ordering and seven unchanged
+`test_low_producers.rs` large-error closures, documented at the input pin.
+Neither file is changed and no lint is suppressed. This is scoped validation.
+
+## Boundless #179: header octets and additive fallible field readers
+
+Upstream-derived `BorrowedHeaders::try_get` uses CStr for names and unwraps UTF-8,
+losing NUL suffixes and panicking on invalid octets. The new inherent
+`try_get_bytes` uses the native length-bearing getter. It preserves complete
+names, duplicate order and null versus empty values with the existing borrow;
+legacy `Headers`, `Header`, iterators and text accessors remain unchanged.
+The native gitlink is `d8fbe0cfb05224b328b9350f40a0774ad04962c6`; bindings were
+regenerated with the existing bindgen 0.72.1 command, retaining the open-integer
+native error enum.
+
+Additive `try_host`, `try_name`, `try_orig_broker_name`, group/member `try_*`,
+`try_broker` and partition-list `try_topic` return the original `Utf8Error`
+instead of their legacy readers' panic. `GroupInfo::broker` was also our W5-D6
+addition; the original metadata/group/member readers are upstream-derived.
+C-string field semantics stay unchanged. The new byte reader and every added
+text accessor are driven by real native storage/wrappers in the six
+`response_text_tests` above, including NUL, invalid, empty and valid UTF-8.
+They passed on the same revision/platform/features. Boundless's real Program,
+callback, rebalance and refusal effect checks are recorded in the consumer.
+No full platform or landing acceptance is claimed.
+
+B2's consumer regression is Boundless
+`protocols::kafka::tests::failure_rows::malformed_rebalances_acknowledge_native_waits_without_installing_bad_topics`.
+It drives real JoinGroup/SyncGroup/Heartbeat replies through the additive
+`try_topic` reader: eager rejection leaves no installed partitions; cooperative
+malformed Assign and its subsequent malformed Revoke preserve the valid `t:0`.
+The consumer records its run result and native acknowledgement/queue/epoch
+assertions; this fork adds no rebalance callback or state owner.
+
 ## W3-D6: retained manual commit completion
 
 Upstream rust-rdkafka `598ac4ba` exposes synchronous/asynchronous commit but no

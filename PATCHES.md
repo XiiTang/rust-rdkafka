@@ -331,3 +331,35 @@ to its end, and anything else fails the batch with `_BAD_COMPRESSION` (see the
 librdkafka fork's `PATCHES.md`). No public C API changes, so bindings and Rust
 sources are unchanged. Boundless's effect check drives crafted gzip and LZ4
 batches through the Fetch reader and is recorded in the consumer.
+
+## Group T class B: request-specific mock response delays
+
+Boundless's Kafka transaction-offset timeout test must complete startup before
+exercising the native send-offsets API limit. A short socket timeout also bounds
+startup and can preempt that decision on a loaded host. `MockCluster::broker_request_error_rtts`
+exposes the existing `rd_kafka_mock_broker_push_request_error_rtts` API, calling it
+once per `(error, delay)` pair with count 1 so the native FIFO order is unchanged.
+Native errors propagate through the existing MockCluster error mapping. No native
+source, timer, cancellation, close or retry behavior changes.
+
+Upstream rust-rdkafka `origin/master` has no wrapper for this native API. librdkafka
+already uses it in `tests/0105-transactions_mock.c` (for example the
+InitProducerId delay in `do_test_txn_slow_reinit` and the request delays in
+`do_test_txn_coordinator_null_not_fatal`). Its
+`do_test_txn_send_offsets_timeout_coord_down` separately passes a 2,000 ms API
+limit after transaction startup, then checks `_TIMED_OUT` and requires-abort.
+The wrapper keeps these native timeout/error behaviors; it only controls the
+mock peer's response latency and adds no adapter-generated answer.
+
+Regression consumer:
+`protocols::kafka::tests::offsets_sent_to_a_transaction_without_a_group_coordinator_end_at_their_limit`
+in Boundless establishes both clients and the transaction with an unexercised
+startup window, delays only subsequent group-coordinator discovery, and passes
+2,000 ms through its existing operation entry to the real native API. It retains
+`_TIMED_OUT` and `requires_abort: true`. The consumer records its Linux/Windows
+stress results with the change; no unrun platform is claimed here.
+
+Local scoped validation on macOS arm64, Rust 1.97.0: library check and strict
+library Clippy pass with no default features and
+`cmake-build,tokio,ssl-vendored,libz-static,zstd,native-test-adapter`. No native
+gitlink or generated binding changes are needed.

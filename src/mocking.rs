@@ -167,6 +167,34 @@ where
         }
     }
 
+    /// Push errors and response delays in milliseconds for one broker and API.
+    ///
+    /// Requests consume the pairs in order. A success code delays an otherwise
+    /// normal response, allowing a test to time out only the request it exercises.
+    pub fn broker_request_error_rtts(
+        &self,
+        broker_id: i32,
+        api_key: RDKafkaApiKey,
+        errors: &[(RDKafkaRespErr, Duration)],
+    ) -> KafkaResult<()> {
+        for &(error, rtt) in errors {
+            let rtt_ms = rtt.as_millis().try_into().unwrap_or(c_int::MAX);
+            return_mock_op! {
+                unsafe {
+                    rdsys::rd_kafka_mock_broker_push_request_error_rtts(
+                        self.mock_cluster,
+                        broker_id,
+                        api_key.into(),
+                        1usize,
+                        error,
+                        rtt_ms,
+                    )
+                }
+            }?;
+        }
+        Ok(())
+    }
+
     /// Set the topic error to return in protocol requests.
     ///
     /// Currently only used for TopicMetadataRequest and AddPartitionsToTxnRequest.

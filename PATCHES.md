@@ -363,3 +363,7 @@ Local scoped validation on macOS arm64, Rust 1.97.0: library check and strict
 library Clippy pass with no default features and
 `cmake-build,tokio,ssl-vendored,libz-static,zstd,native-test-adapter`. No native
 gitlink or generated binding changes are needed.
+
+The native gitlink moves to `3f8ff9561d766af96693496f6241b419f607a8b8`, which
+builds Snappy into Windows CMake builds as every other build does (see the
+librdkafka fork's PATCHES.md; Boundless #595). No Rust source changes.
